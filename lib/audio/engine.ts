@@ -19,6 +19,7 @@
 
 import { createAmbience } from "./ambience";
 import { createDrumDynamics, createMixDynamics } from "./dynamics";
+import { createSceneReverb } from "./reverb";
 import {
   KITS,
   type BassVoice,
@@ -32,8 +33,12 @@ import { chance, randInt } from "./random";
 import { makeScene, summarize, type Chord, type Scene, type SceneSummary } from "./scenes";
 import { createVoices } from "./voices";
 
-const STEPS = 32;             // two bars of 16ths = one chord
-const CHORDS_PER_ROUND = 4;   // one round = a full pass through the progression
+export const STEPS = 32;             // two bars of 16ths = one chord
+export const CHORDS_PER_ROUND = 4;   // one round = a full pass through the progression
+
+export function sceneDurationSecs(rounds: number, bpm: number): number {
+  return rounds * CHORDS_PER_ROUND * STEPS * (60 / bpm / 4);
+}
 const LOOKAHEAD_VISIBLE_SECS = 0.15;
 const LOOKAHEAD_HIDDEN_SECS = 45;
 const TICK_MS = 30;
@@ -57,6 +62,8 @@ export interface NightdriftEngine {
   setMood(mood: MoodKey): void;
   /** Fallback when MediaStream → <audio> playback is unavailable. */
   connectDirectOutput(): void;
+  /** Elapsed fraction of the current scene (0–1), for UI progress rings. */
+  getSceneProgress(): number;
   dispose(): void;
 }
 
@@ -70,37 +77,23 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
 
-  // generated reverb impulse (2.8 s exponential decay)
-  const irLen = Math.floor(ctx.sampleRate * 2.8);
-  const ir = ctx.createBuffer(2, irLen, ctx.sampleRate);
-  for (let ch = 0; ch < 2; ch++) {
-    const d = ir.getChannelData(ch);
-    for (let i = 0; i < irLen; i++) {
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 2.4);
-    }
-  }
-
   // ---- graph ----
   const master = ctx.createGain();
   master.gain.value = 0.0001;
   const playbackStream = ctx.createMediaStreamDestination();
   master.connect(playbackStream);
 
-  const reverb = ctx.createConvolver();
-  reverb.buffer = ir;
-  const reverbGain = ctx.createGain();
-  reverbGain.gain.value = 0.3;
-
   const mixDynamics = createMixDynamics(ctx);
   mixDynamics.mix.connect(master);
+
+  const sceneReverb = createSceneReverb(ctx, mixDynamics.mix);
 
   // everything melodic goes through tape → compression → sidechain duck
   const tape = ctx.createBiquadFilter();
   tape.type = "lowpass";
   tape.frequency.value = 3200;
   tape.connect(mixDynamics.input);
-  tape.connect(reverb);
-  reverb.connect(reverbGain).connect(mixDynamics.mix);
+  tape.connect(sceneReverb.input);
 
   // drums get their own bus so segues and dropouts can fade them smoothly
   const drums = ctx.createGain();
@@ -144,7 +137,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   const ambience = createAmbience(ctx, master, noiseBuf);
 
   const voices = createVoices({
-    ctx, tape, drums, undertone, master, reverb, pops, noiseBuf, wobbleAmt,
+    ctx, tape, drums, undertone, master, reverb: sceneReverb.input, pops, noiseBuf, wobbleAmt,
   });
 
   // ---- voice dispatch ----
@@ -208,6 +201,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   let timerId: ReturnType<typeof setInterval> | null = null;
   let lookaheadSecs = document.hidden ? LOOKAHEAD_HIDDEN_SECS : LOOKAHEAD_VISIBLE_SECS;
   let directOutput = false;
+  let sceneStartedAt = 0;
   const h = () => (Math.random() - 0.5) * 0.012; // humanize
 
   function onVisibilityChange() {
@@ -224,12 +218,18 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     tape.frequency.setTargetAtTime(s.tapeCutoff, t, tc);
     wobbleAmt.gain.setTargetAtTime(s.wobbleCents, t, tc);
     wobble.frequency.setTargetAtTime(s.wobbleRate, t, tc);
+    sceneReverb.set(
+      { send: s.reverbSend, decay: s.reverbDecay, damp: s.reverbDamp },
+      t,
+      fast,
+    );
     ambience.set(s.ambience, t, fast);
   }
 
   /** The seamless segue: swap scenes at a chord boundary. */
   function beginScene(next: Scene, t: number) {
     scene = next;
+    sceneStartedAt = t;
     round = 0;
     outroStarted = false;
     applyAtmosphere(next, t);
@@ -580,6 +580,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     start(volDb) {
       step = 0; chordIdx = -1; round = 0; outroStarted = false;
       nextTime = ctx.currentTime + 0.1;
+      sceneStartedAt = nextTime;
       applyAtmosphere(scene, ctx.currentTime, true);
       master.gain.setValueAtTime(0.0001, ctx.currentTime);
       master.gain.exponentialRampToValueAtTime(dbToGain(volDb), ctx.currentTime + 4);
@@ -617,6 +618,11 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
       if (directOutput) return;
       master.connect(ctx.destination);
       directOutput = true;
+    },
+    getSceneProgress() {
+      const dur = sceneDurationSecs(scene.rounds, scene.bpm);
+      if (dur <= 0) return 0;
+      return Math.min(1, Math.max(0, (ctx.currentTime - sceneStartedAt) / dur));
     },
     dispose() {
       document.removeEventListener("visibilitychange", onVisibilityChange);

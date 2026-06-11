@@ -30,7 +30,7 @@ export default function Nightdrift() {
     volumeDb, setVolumeDb,
     crackleOn, setCrackleOn,
     timerMin, setTimer, remaining,
-    scene,
+    scene, sceneProgress,
   } = useNightdrift();
 
   return (
@@ -45,7 +45,11 @@ export default function Nightdrift() {
       </header>
 
       <main className="z-10 flex flex-1 flex-col items-center justify-center py-5">
-        <HaloButton playing={playing} onClick={playing ? () => stop() : start} />
+        <HaloButton
+          playing={playing}
+          progress={sceneProgress}
+          onClick={playing ? () => stop() : start}
+        />
 
         <div className="mt-7 flex h-20 flex-col items-center gap-1.5">
           {playing && scene && (

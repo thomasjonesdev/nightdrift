@@ -28,6 +28,8 @@ export interface Nightdrift {
   remaining: number | null;
   /** The generated "track" currently drifting by, for the now-playing readout. */
   scene: SceneSummary | null;
+  /** Elapsed fraction of the current scene (0–1), for the halo progress ring. */
+  sceneProgress: number;
   start: () => void;
   stop: () => void;
 }
@@ -40,6 +42,7 @@ export function useNightdrift(): Nightdrift {
   const [timerMin, setTimerMin] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [scene, setScene] = useState<SceneSummary | null>(null);
+  const [sceneProgress, setSceneProgress] = useState(0);
 
   const engine = useRef<NightdriftEngine | null>(null);
   const sink = useRef<PlaybackSink | null>(null);
@@ -147,6 +150,21 @@ export function useNightdrift(): Nightdrift {
     if (playing) updateMediaSession(scene);
   }, [playing, scene]);
 
+  // halo ring: poll engine for smooth scene progress
+  useEffect(() => {
+    if (!playing) {
+      setSceneProgress(0);
+      return;
+    }
+    let frame = 0;
+    const tick = () => {
+      setSceneProgress(engine.current?.getSceneProgress() ?? 0);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
+
   // sleep timer: tick + long fade over the final minute
   useEffect(() => {
     if (!playing) return;
@@ -191,6 +209,7 @@ export function useNightdrift(): Nightdrift {
     setTimer,
     remaining,
     scene,
+    sceneProgress,
     start,
     stop,
   };

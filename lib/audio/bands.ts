@@ -6,6 +6,7 @@
 
 import type { MoodKey } from "./moods";
 import { chance, pick, weightedPick } from "./random";
+import type { ReverbSpec } from "./reverb";
 
 export type ChordVoice =
   | "ep" | "fmep" | "organ" | "guitar" | "vibe" | "strings" | "pluck"
@@ -102,6 +103,8 @@ export interface Band {
   padChance: number;
   /** Tape lowpass range for this band's character. */
   tapeCutoff: [number, number];
+  /** Room size and wetness — resolved per scene like tapeCutoff. */
+  reverb: ReverbSpec;
   /** Relative likelihood per mood family. */
   weights: Record<MoodKey, number>;
 }
@@ -116,6 +119,7 @@ const BANDS: Band[] = [
     kit: "boomBap",
     padChance: 0.5,
     tapeCutoff: [2600, 3600],
+    reverb: { send: [0.22, 0.32], decay: [1.8, 2.4], damp: [2800, 3800] },
     weights: { mellow: 1, jazzy: 0.7, rainy: 0.7 },
   },
   {
@@ -127,6 +131,7 @@ const BANDS: Band[] = [
     kit: "boomBap", pulseVoice: "shaker",
     padChance: 0.25,
     tapeCutoff: [2800, 3800],
+    reverb: { send: [0.12, 0.22], decay: [1.2, 1.8], damp: [3200, 4500] },
     weights: { mellow: 0.4, jazzy: 1, rainy: 0.25 },
   },
   {
@@ -138,6 +143,7 @@ const BANDS: Band[] = [
     kit: "brushes",
     padChance: 0.2,
     tapeCutoff: [2400, 3200],
+    reverb: { send: [0.18, 0.28], decay: [1.4, 2.0], damp: [2600, 3600] },
     weights: { mellow: 0.9, jazzy: 0.5, rainy: 0.6 },
   },
   {
@@ -149,6 +155,7 @@ const BANDS: Band[] = [
     kit: "slowMotion",
     padChance: 0,
     tapeCutoff: [2200, 3000],
+    reverb: { send: [0.32, 0.44], decay: [3.5, 4.8], damp: [1800, 2600] },
     weights: { mellow: 0.2, jazzy: 0.35, rainy: 0.9 },
   },
   {
@@ -160,6 +167,7 @@ const BANDS: Band[] = [
     kit: "brushes",
     padChance: 0.3,
     tapeCutoff: [3000, 4000],
+    reverb: { send: [0.26, 0.36], decay: [2.2, 3.0], damp: [3000, 4200] },
     weights: { mellow: 0.45, jazzy: 0.9, rainy: 0.35 },
   },
   {
@@ -171,6 +179,7 @@ const BANDS: Band[] = [
     kit: "slowMotion",
     padChance: 0,
     tapeCutoff: [2400, 3200],
+    reverb: { send: [0.30, 0.40], decay: [3.0, 4.2], damp: [2000, 3000] },
     weights: { mellow: 0.5, jazzy: 0.1, rainy: 0.95 },
   },
   {
@@ -182,6 +191,7 @@ const BANDS: Band[] = [
     kit: "bossa",
     padChance: 0.2,
     tapeCutoff: [2800, 3600],
+    reverb: { send: [0.20, 0.30], decay: [1.6, 2.2], damp: [3500, 4800] },
     weights: { mellow: 0.7, jazzy: 0.9, rainy: 0.15 },
   },
   {
@@ -193,6 +203,7 @@ const BANDS: Band[] = [
     kit: "heartbeat",
     padChance: 0.4,
     tapeCutoff: [2600, 3400],
+    reverb: { send: [0.14, 0.24], decay: [1.0, 1.6], damp: [2400, 3400] },
     weights: { mellow: 0.3, jazzy: 0.1, rainy: 0.85 },
   },
   {
@@ -204,6 +215,7 @@ const BANDS: Band[] = [
     kit: "brushes",
     padChance: 0.35,
     tapeCutoff: [2800, 3800],
+    reverb: { send: [0.24, 0.34], decay: [2.0, 2.8], damp: [3200, 4400] },
     weights: { mellow: 0.7, jazzy: 0.6, rainy: 0.5 },
   },
   {
@@ -215,6 +227,7 @@ const BANDS: Band[] = [
     kit: "slowMotion",
     padChance: 0.15,
     tapeCutoff: [2200, 3000],
+    reverb: { send: [0.36, 0.48], decay: [4.0, 5.5], damp: [1600, 2400] },
     weights: { mellow: 0.6, jazzy: 0.2, rainy: 0.85 },
   },
   {
@@ -226,6 +239,7 @@ const BANDS: Band[] = [
     kit: "slowMotion",
     padChance: 0.25,
     tapeCutoff: [2400, 3200],
+    reverb: { send: [0.28, 0.38], decay: [2.4, 3.4], damp: [2200, 3200] },
     weights: { mellow: 0.5, jazzy: 0.75, rainy: 0.4 },
   },
   {
@@ -237,6 +251,7 @@ const BANDS: Band[] = [
     kit: "heartbeat",
     padChance: 0.3,
     tapeCutoff: [2600, 3600],
+    reverb: { send: [0.16, 0.26], decay: [1.2, 1.9], damp: [2600, 3600] },
     weights: { mellow: 0.55, jazzy: 0.4, rainy: 0.7 },
   },
 ];

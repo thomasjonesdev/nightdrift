@@ -239,6 +239,9 @@ export interface Scene {
   tapeCutoff: number;
   wobbleCents: number;
   wobbleRate: number;
+  reverbSend: number;
+  reverbDecay: number;
+  reverbDamp: number;
 }
 
 export interface SceneSummary {
@@ -246,13 +249,15 @@ export interface SceneSummary {
   family: MoodKey;
   keyName: string;
   bpm: number;
+  /** Full 8-bar passes before the next segue. */
+  rounds: number;
   /** Display name of the band playing this scene. */
   band: string;
 }
 
 export function summarize(scene: Scene): SceneSummary {
-  const { name, family, keyName, bpm } = scene;
-  return { name, family, keyName, bpm, band: scene.band.name };
+  const { name, family, keyName, bpm, rounds } = scene;
+  return { name, family, keyName, bpm, rounds, band: scene.band.name };
 }
 
 function buildChord(keyPc: number, spec: ChordSpec): Chord {
@@ -315,5 +320,8 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
     tapeCutoff: rand(band.tapeCutoff[0], band.tapeCutoff[1]),
     wobbleCents: rand(4, 10),
     wobbleRate: rand(0.3, 0.8),
+    reverbSend: rand(band.reverb.send[0], band.reverb.send[1]),
+    reverbDecay: rand(band.reverb.decay[0], band.reverb.decay[1]),
+    reverbDamp: rand(band.reverb.damp[0], band.reverb.damp[1]),
   };
 }

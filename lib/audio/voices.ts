@@ -13,7 +13,8 @@ export interface Buses {
   /** Sub-bass undertone bus — sits under the mix for main voices to breathe around. */
   undertone: GainNode;
   master: GainNode;
-  reverb: ConvolverNode;
+  /** Reverb send bus — per-band wet/damp/decay morph at scene segues. */
+  reverb: GainNode;
   /** Vinyl pop bus, muted when crackle is off. */
   pops: GainNode;
   noiseBuf: AudioBuffer;
