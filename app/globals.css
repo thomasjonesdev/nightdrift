@@ -1,26 +1,77 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@theme {
+  /* night sky */
+  --color-night: #060610;
+  --color-night-mid: #0a0a18;
+  --color-dusk: #141229;
+  --color-dusk-rose: #926078;
+  --color-starlight: #b9b2d8;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* warm foregrounds */
+  --color-ink: #cfc8bb;
+  --color-parchment: #e8ddc8;
+  --color-cream: #efe6d2;
+  --color-ember: #d6a060;
+  --color-glow: #deaa68;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* muted purples */
+  --color-haze: #7d7890;
+  --color-haze-dim: #6f6a84;
+  --color-haze-soft: #8d87a0;
+  --color-lavender: #a59fb4;
+
+  --font-display: Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --animate-twinkle: twinkle 9s ease-in-out infinite;
+  --animate-breathe: breathe 3.3s ease-in-out infinite;
+  --animate-drift-in: drift-in 2.4s ease-out both;
+
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.07; }
+    50% { opacity: 0.28; }
+  }
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(0.88); opacity: 0.75; }
+    50% { transform: scale(1.1); opacity: 1; }
+  }
+
+  @keyframes drift-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-night);
+  color: var(--color-ink);
+}
+
+@layer components {
+  .volume-slider {
+    appearance: none;
+    height: 2px;
+    border-radius: 2px;
+    background: --alpha(var(--color-ink) / 25%);
+  }
+  .volume-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-ember);
+    cursor: pointer;
+    box-shadow: 0 0 12px --alpha(var(--color-ember) / 50%);
+  }
+  .volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: none;
+    border-radius: 50%;
+    background: var(--color-ember);
+    cursor: pointer;
+  }
 }

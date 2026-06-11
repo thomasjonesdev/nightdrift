@@ -1,0 +1,115 @@
+"use client";
+
+import { useNightdrift } from "@/hooks/use-nightdrift";
+import { MOODS, TIMERS, type MoodKey } from "@/lib/audio/moods";
+import HaloButton from "./halo-button";
+import Pill from "./pill";
+import Starfield from "./starfield";
+
+function formatTime(totalSeconds: number) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = String(totalSeconds % 60).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function ControlRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section className="flex flex-wrap items-center gap-3.5">
+      <span className="w-[90px] shrink-0 font-sans text-xs uppercase tracking-[0.16em] text-haze-dim">
+        {label}
+      </span>
+      {children}
+    </section>
+  );
+}
+
+export default function Nightdrift() {
+  const {
+    playing, start, stop,
+    mood, setMood,
+    volumeDb, setVolumeDb,
+    crackleOn, setCrackleOn,
+    timerMin, setTimer, remaining,
+    scene,
+  } = useNightdrift();
+
+  return (
+    <div className="relative flex min-h-screen flex-col items-center overflow-hidden bg-[radial-gradient(120%_90%_at_50%_0%,var(--color-dusk)_0%,var(--color-night-mid)_55%,var(--color-night)_100%)] font-display text-ink">
+      <Starfield />
+
+      <header className="z-10 pt-11 text-center">
+        <div className="text-[26px] lowercase tracking-[0.35em] text-parchment">nightdrift</div>
+        <div className="mt-2.5 font-sans text-xs uppercase tracking-[0.2em] text-haze">
+          generative lofi for sleep
+        </div>
+      </header>
+
+      <main className="z-10 flex flex-1 flex-col items-center justify-center py-5">
+        <HaloButton playing={playing} onClick={playing ? () => stop() : start} />
+
+        <div className="mt-7 flex h-20 flex-col items-center gap-1.5">
+          {playing && scene && (
+            <div key={scene.name} className="animate-drift-in text-center">
+              <span className="text-[15px] italic tracking-[0.06em] text-parchment/90">
+                {scene.name}
+              </span>
+              <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
+                {scene.band} · {scene.keyName} · {scene.bpm} bpm
+              </span>
+            </div>
+          )}
+          {remaining !== null && (
+            <div className="font-sans text-[13px] tracking-[0.08em] text-haze-soft">
+              fading out in <span className="font-mono">{formatTime(remaining)}</span>
+            </div>
+          )}
+        </div>
+      </main>
+
+      <footer className="z-10 flex w-full max-w-[520px] flex-col gap-[18px] px-6 pb-12">
+        <ControlRow label="mood">
+          <div className="flex flex-wrap gap-2">
+            {(Object.entries(MOODS) as [MoodKey, (typeof MOODS)[MoodKey]][]).map(([key, m]) => (
+              <Pill key={key} active={mood === key} onClick={() => setMood(key)} title={m.hint}>
+                {m.label}
+              </Pill>
+            ))}
+          </div>
+        </ControlRow>
+
+        <ControlRow label="sleep timer">
+          <div className="flex flex-wrap gap-2">
+            {TIMERS.map((t) => (
+              <Pill key={t.label} active={timerMin === t.min} onClick={() => setTimer(t.min)}>
+                {t.label}
+              </Pill>
+            ))}
+          </div>
+        </ControlRow>
+
+        <ControlRow label="volume">
+          <input
+            type="range"
+            min={-30}
+            max={-4}
+            step={1}
+            value={volumeDb}
+            onChange={(e) => setVolumeDb(Number(e.target.value))}
+            className="volume-slider min-w-40 flex-1"
+            aria-label="Volume"
+          />
+        </ControlRow>
+
+        <ControlRow label="vinyl">
+          <Pill
+            active={crackleOn}
+            onClick={() => setCrackleOn(!crackleOn)}
+            aria-pressed={crackleOn}
+          >
+            {crackleOn ? "crackle on" : "crackle off"}
+          </Pill>
+        </ControlRow>
+      </footer>
+    </div>
+  );
+}
