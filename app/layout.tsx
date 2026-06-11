@@ -16,6 +16,16 @@ export const metadata: Metadata = {
   title: "nightdrift",
   description:
     "Generative lofi for falling asleep — a swung boom-bap beat, Rhodes-style chords, and vinyl crackle that never repeats.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "nightdrift",
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export const viewport: Viewport = {

@@ -309,7 +309,7 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
     rounds: randInt(3, 5),
     band,
     bassStyle:
-      band.bassStyle === "either" ? (chance(0.4) ? "walking" : "anchor") : band.bassStyle,
+      band.bassStyle === "either" ? (chance(0.5) ? "walking" : "anchor") : band.bassStyle,
     padOn: chance(band.padChance * (family === "rainy" ? 1.4 : 1)),
     ambience: pickAmbience(family),
     tapeCutoff: rand(band.tapeCutoff[0], band.tapeCutoff[1]),

@@ -7,8 +7,12 @@
 import type { MoodKey } from "./moods";
 import { chance, pick, weightedPick } from "./random";
 
-export type ChordVoice = "ep" | "fmep" | "organ" | "guitar" | "vibe" | "strings" | "pluck";
-export type MelodyVoice = "ep" | "fmep" | "pluck" | "guitar" | "vibe" | "bell";
+export type ChordVoice =
+  | "ep" | "fmep" | "organ" | "guitar" | "vibe" | "strings" | "pluck"
+  | "marimba" | "choir" | "horn";
+export type MelodyVoice =
+  | "ep" | "fmep" | "pluck" | "guitar" | "vibe" | "bell"
+  | "clarinet" | "horn" | "marimba" | "choir";
 export type BassVoice = "sine" | "pluck" | "none";
 export type CompingStyle = "rolled" | "sustained" | "stabs" | "arp" | "broken";
 export type MelodyBehavior = "motif" | "arp" | "held" | "sparse";
@@ -191,6 +195,50 @@ const BANDS: Band[] = [
     tapeCutoff: [2600, 3400],
     weights: { mellow: 0.3, jazzy: 0.1, rainy: 0.85 },
   },
+  {
+    id: "marimba-garden",
+    name: "marimba garden",
+    chordVoice: "marimba", comping: "rolled",
+    bassVoice: "sine", bassStyle: "walking",
+    melodyVoice: "clarinet", melodyBehavior: "motif",
+    kit: "brushes",
+    padChance: 0.35,
+    tapeCutoff: [2800, 3800],
+    weights: { mellow: 0.7, jazzy: 0.6, rainy: 0.5 },
+  },
+  {
+    id: "chapel-choir",
+    name: "chapel choir",
+    chordVoice: "choir", comping: "sustained",
+    bassVoice: "sine", bassStyle: "anchor",
+    melodyVoice: "horn", melodyBehavior: "held",
+    kit: "slowMotion",
+    padChance: 0.15,
+    tapeCutoff: [2200, 3000],
+    weights: { mellow: 0.6, jazzy: 0.2, rainy: 0.85 },
+  },
+  {
+    id: "brass-midnight",
+    name: "brass midnight",
+    chordVoice: "horn", comping: "stabs",
+    bassVoice: "sine", bassStyle: "anchor",
+    melodyVoice: "clarinet", melodyBehavior: "sparse",
+    kit: "slowMotion",
+    padChance: 0.25,
+    tapeCutoff: [2400, 3200],
+    weights: { mellow: 0.5, jazzy: 0.75, rainy: 0.4 },
+  },
+  {
+    id: "marimba-attic",
+    name: "marimba attic",
+    chordVoice: "marimba", comping: "arp",
+    bassVoice: "pluck", bassStyle: "anchor",
+    melodyVoice: "marimba", melodyBehavior: "arp",
+    kit: "heartbeat",
+    padChance: 0.3,
+    tapeCutoff: [2600, 3600],
+    weights: { mellow: 0.55, jazzy: 0.4, rainy: 0.7 },
+  },
 ];
 
 // ---- guest musicians ----------------------------------------------------------
@@ -202,15 +250,23 @@ const GUEST_NAMES: Record<MelodyVoice, string> = {
   guitar: "nylon guitar",
   vibe: "vibraphone",
   bell: "music box",
+  clarinet: "clarinet",
+  horn: "muted horn",
+  marimba: "marimba",
+  choir: "choir",
 };
 
 const GUEST_ALTS: Record<MelodyVoice, MelodyVoice[]> = {
-  ep: ["vibe", "guitar", "bell", "fmep"],
-  fmep: ["vibe", "bell", "pluck"],
-  pluck: ["bell", "guitar", "ep"],
-  guitar: ["pluck", "vibe", "ep"],
-  vibe: ["ep", "guitar", "bell"],
-  bell: ["pluck", "vibe"],
+  ep: ["vibe", "guitar", "bell", "fmep", "clarinet"],
+  fmep: ["vibe", "bell", "pluck", "clarinet"],
+  pluck: ["bell", "guitar", "ep", "marimba"],
+  guitar: ["pluck", "vibe", "ep", "clarinet"],
+  vibe: ["ep", "guitar", "bell", "marimba"],
+  bell: ["pluck", "vibe", "clarinet", "horn"],
+  clarinet: ["horn", "bell", "marimba", "ep"],
+  horn: ["clarinet", "bell", "choir"],
+  marimba: ["vibe", "pluck", "clarinet"],
+  choir: ["horn", "bell", "clarinet"],
 };
 
 /**

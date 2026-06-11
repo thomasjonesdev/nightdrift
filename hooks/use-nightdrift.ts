@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createEngine, type NightdriftEngine } from "@/lib/audio/engine";
+import {
+  bindMediaSession,
+  clearMediaSession,
+  updateMediaSession,
+} from "@/lib/audio/media-session";
 import type { MoodKey } from "@/lib/audio/moods";
+import { PlaybackSink } from "@/lib/audio/playback-sink";
 import type { SceneSummary } from "@/lib/audio/scenes";
 
 const DEFAULT_VOLUME_DB = -12;
@@ -36,11 +42,14 @@ export function useNightdrift(): Nightdrift {
   const [scene, setScene] = useState<SceneSummary | null>(null);
 
   const engine = useRef<NightdriftEngine | null>(null);
+  const sink = useRef<PlaybackSink | null>(null);
   const moodRef = useRef(mood);
   const crackleRef = useRef(crackleOn);
   const volRef = useRef(volumeDb);
   const timerEnd = useRef<number | null>(null);
   const fading = useRef(false);
+  const startRef = useRef<() => void>(() => {});
+  const stopRef = useRef<(fadeSeconds?: number) => void>(() => {});
 
   // mirrored into refs so start() always reads fresh values
   useEffect(() => {
@@ -56,8 +65,14 @@ export function useNightdrift(): Nightdrift {
       crackle: crackleRef.current,
       onSceneChange: setScene,
     });
-    if (engine.current.ctx.state === "suspended") engine.current.ctx.resume();
+    if (engine.current.ctx.state === "suspended") void engine.current.ctx.resume();
     engine.current.start(volRef.current);
+
+    if (!sink.current) sink.current = new PlaybackSink();
+    void sink.current.attach(engine.current.playbackStream).catch(() => {
+      engine.current?.connectDirectOutput();
+    });
+
     fading.current = false;
 
     if (timerMin > 0) {
@@ -79,13 +94,18 @@ export function useNightdrift(): Nightdrift {
           e.dispose();
           engine.current = null;
         }
+        sink.current?.detach();
       }, fadeSeconds * 1000 + 200);
     }
     timerEnd.current = null;
     fading.current = false;
     setRemaining(null);
     setPlaying(false);
+    clearMediaSession();
   }, []);
+
+  startRef.current = start;
+  stopRef.current = stop;
 
   const setMood = useCallback((next: MoodKey) => {
     setMoodState(next);
@@ -114,6 +134,19 @@ export function useNightdrift(): Nightdrift {
     [playing],
   );
 
+  // lock-screen / headset controls → same start/stop as the halo button
+  useEffect(() => {
+    return bindMediaSession({
+      onPlay: () => startRef.current(),
+      onPause: () => stopRef.current(),
+    });
+  }, []);
+
+  // now-playing metadata for the OS media UI
+  useEffect(() => {
+    if (playing) updateMediaSession(scene);
+  }, [playing, scene]);
+
   // sleep timer: tick + long fade over the final minute
   useEffect(() => {
     if (!playing) return;
@@ -141,6 +174,8 @@ export function useNightdrift(): Nightdrift {
   useEffect(() => {
     return () => {
       if (engine.current) engine.current.dispose();
+      sink.current?.dispose();
+      sink.current = null;
     };
   }, []);
 
