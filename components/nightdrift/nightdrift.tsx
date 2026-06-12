@@ -108,7 +108,7 @@ export default function Nightdrift() {
       <NoiseOverlay active={crackleOn} />
 
       <header className="z-10 pt-11 text-center">
-        <div className="text-[26px] lowercase tracking-[0.35em] text-parchment">Nightdrift</div>
+        <div className="text-[26px] lowercase tracking-[0.1em] text-parchment opacity-50">- nightdrift -</div>
         <div className="mt-2.5 min-h-lh font-sans text-xs uppercase tracking-[0.2em] text-haze">
           {tagline}
         </div>
