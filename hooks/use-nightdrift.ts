@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createEngine, type NightdriftEngine } from "@/lib/audio/engine";
+import { createEngine, type ChannelLevels, type NightdriftEngine } from "@/lib/audio/engine";
 import {
   bindMediaSession,
   clearMediaSession,
@@ -26,10 +26,17 @@ export interface Nightdrift {
   setTimer: (min: number) => void;
   /** Seconds until the sleep timer stops playback, or null when no timer runs. */
   remaining: number | null;
+  /** Sleep-timer fraction left (1→0), for the halo countdown ring. */
+  timerProgress: number | null;
   /** The generated "track" currently drifting by, for the now-playing readout. */
   scene: SceneSummary | null;
   /** Elapsed fraction of the current scene (0–1), for the halo progress ring. */
   sceneProgress: number;
+  /**
+   * Live per-channel output levels (0–1), polled by the band stage on its
+   * own rAF loop — a function (not state) so 60fps reads skip React renders.
+   */
+  getChannelLevels: () => ChannelLevels | null;
   start: () => void;
   stop: () => void;
 }
@@ -41,6 +48,7 @@ export function useNightdrift(): Nightdrift {
   const [crackleOn, setCrackleOnState] = useState(true);
   const [timerMin, setTimerMin] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
+  const [timerProgress, setTimerProgress] = useState<number | null>(null);
   const [scene, setScene] = useState<SceneSummary | null>(null);
   const [sceneProgress, setSceneProgress] = useState(0);
 
@@ -50,6 +58,7 @@ export function useNightdrift(): Nightdrift {
   const crackleRef = useRef(crackleOn);
   const volRef = useRef(volumeDb);
   const timerEnd = useRef<number | null>(null);
+  const timerTotalSecs = useRef(0);
   const fading = useRef(false);
   const startRef = useRef<() => void>(() => {});
   const stopRef = useRef<(fadeSeconds?: number) => void>(() => {});
@@ -79,11 +88,15 @@ export function useNightdrift(): Nightdrift {
     fading.current = false;
 
     if (timerMin > 0) {
-      timerEnd.current = Date.now() + timerMin * 60 * 1000;
-      setRemaining(timerMin * 60);
+      timerTotalSecs.current = timerMin * 60;
+      timerEnd.current = Date.now() + timerTotalSecs.current * 1000;
+      setRemaining(timerTotalSecs.current);
+      setTimerProgress(1);
     } else {
       timerEnd.current = null;
+      timerTotalSecs.current = 0;
       setRemaining(null);
+      setTimerProgress(null);
     }
     setPlaying(true);
   }, [timerMin]);
@@ -101,14 +114,24 @@ export function useNightdrift(): Nightdrift {
       }, fadeSeconds * 1000 + 200);
     }
     timerEnd.current = null;
+    timerTotalSecs.current = 0;
     fading.current = false;
     setRemaining(null);
+    setTimerProgress(null);
     setPlaying(false);
+    setSceneProgress(0);
     clearMediaSession();
   }, []);
 
-  startRef.current = start;
-  stopRef.current = stop;
+  useEffect(() => {
+    startRef.current = start;
+    stopRef.current = stop;
+  }, [start, stop]);
+
+  const getChannelLevels = useCallback(
+    () => engine.current?.getChannelLevels() ?? null,
+    [],
+  );
 
   const setMood = useCallback((next: MoodKey) => {
     setMoodState(next);
@@ -125,13 +148,17 @@ export function useNightdrift(): Nightdrift {
       setTimerMin(min);
       if (!playing) return;
       if (min > 0) {
-        timerEnd.current = Date.now() + min * 60 * 1000;
-        setRemaining(min * 60);
+        timerTotalSecs.current = min * 60;
+        timerEnd.current = Date.now() + timerTotalSecs.current * 1000;
+        setRemaining(timerTotalSecs.current);
+        setTimerProgress(1);
         fading.current = false;
         engine.current?.setVolume(volRef.current, 1);
       } else {
         timerEnd.current = null;
+        timerTotalSecs.current = 0;
         setRemaining(null);
+        setTimerProgress(null);
       }
     },
     [playing],
@@ -150,15 +177,16 @@ export function useNightdrift(): Nightdrift {
     if (playing) updateMediaSession(scene);
   }, [playing, scene]);
 
-  // halo ring: poll engine for smooth scene progress
+  // halo rings: smooth scene progress + sleep-timer countdown
   useEffect(() => {
-    if (!playing) {
-      setSceneProgress(0);
-      return;
-    }
+    if (!playing) return;
     let frame = 0;
     const tick = () => {
       setSceneProgress(engine.current?.getSceneProgress() ?? 0);
+      if (timerEnd.current && timerTotalSecs.current > 0) {
+        const leftMs = Math.max(0, timerEnd.current - Date.now());
+        setTimerProgress(leftMs / (timerTotalSecs.current * 1000));
+      }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -208,8 +236,10 @@ export function useNightdrift(): Nightdrift {
     timerMin,
     setTimer,
     remaining,
+    timerProgress,
     scene,
     sceneProgress,
+    getChannelLevels,
     start,
     stop,
   };

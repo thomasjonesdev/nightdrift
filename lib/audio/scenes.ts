@@ -4,8 +4,16 @@
 // The engine plays a scene for a few rounds (8-bar passes) and then
 // segues into the next one.
 
-import { pickAmbience, type AmbienceSpec } from "./ambience";
-import { assembleBand, KITS, type Band } from "./bands";
+import { pickAmbience, type AmbienceBed, type AmbienceSpec } from "./ambience";
+import {
+  assembleBand,
+  KITS,
+  type Band,
+  type BassVoice,
+  type ChordVoice,
+  type KitId,
+  type MelodyVoice,
+} from "./bands";
 import type { MoodKey } from "./moods";
 import { noteFromMidi, pitchClassName } from "./notes";
 import { chance, pick, rand, randInt, weightedPick } from "./random";
@@ -375,6 +383,15 @@ export interface ProgressionStepSummary {
   name: string;
 }
 
+/** Who is on stage this scene — drives the animated band on the home screen. */
+export interface SceneLineup {
+  chords: ChordVoice;
+  melody: MelodyVoice;
+  bass: BassVoice;
+  kit: KitId;
+  ambience: AmbienceBed;
+}
+
 export interface SceneSummary {
   name: string;
   family: MoodKey;
@@ -384,6 +401,7 @@ export interface SceneSummary {
   rounds: number;
   /** Display name of the band playing this scene. */
   band: string;
+  lineup: SceneLineup;
   progression: ProgressionStepSummary[];
 }
 
@@ -405,6 +423,13 @@ export function summarize(scene: Scene): SceneSummary {
     bpm,
     rounds,
     band: scene.band.name,
+    lineup: {
+      chords: scene.band.chordVoice,
+      melody: scene.band.melodyVoice,
+      bass: scene.band.bassVoice,
+      kit: scene.band.kit,
+      ambience: scene.ambience.bed,
+    },
     progression: progression.map((chord, i) => ({
       name: chordDisplayName(chord.root, specs[i].quality),
     })),

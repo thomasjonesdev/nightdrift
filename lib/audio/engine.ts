@@ -29,7 +29,7 @@ import {
 } from "./bands";
 import type { MoodKey } from "./moods";
 import { dbToGain, midiFromNote, noteFromMidi } from "./notes";
-import { chance, randInt } from "./random";
+import { chance, pick, randInt } from "./random";
 import {
   makeScene,
   summarize,
@@ -59,6 +59,11 @@ export interface EngineConfig {
   onSceneChange?: (scene: SceneSummary) => void;
 }
 
+/** The meterable channels — one per member of the band, plus the weather. */
+export type ChannelId = "chords" | "melody" | "bass" | "drums" | "ambience";
+/** Live output level per channel, 0–1 (UI scales to taste). */
+export type ChannelLevels = Record<ChannelId, number>;
+
 export interface NightdriftEngine {
   ctx: AudioContext;
   /** Attach to a hidden <audio> element for mobile background playback. */
@@ -73,6 +78,8 @@ export interface NightdriftEngine {
   connectDirectOutput(): void;
   /** Elapsed fraction of the current scene (0–1), for UI progress rings. */
   getSceneProgress(): number;
+  /** Live per-channel levels, for the animated band on the home screen. */
+  getChannelLevels(): ChannelLevels;
   dispose(): void;
 }
 
@@ -143,45 +150,81 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   pops.connect(master);
 
   // the weather outside the song (rain, wind, city, fire — see ambience.ts)
-  const ambience = createAmbience(ctx, master, noiseBuf);
+  const ambienceBus = ctx.createGain();
+  ambienceBus.connect(master);
+  const ambience = createAmbience(ctx, ambienceBus, noiseBuf);
 
-  const voices = createVoices({
-    ctx, tape, drums, undertone, master, reverb: sceneReverb.input, pops, noiseBuf, wobbleAmt,
-  });
+  // each band role gets its own bus into the tape so the UI can meter who
+  // is playing right now (chords vs melody vs bass)
+  const chordBus = ctx.createGain();
+  const melodyBus = ctx.createGain();
+  const bassBus = ctx.createGain();
+  chordBus.connect(tape);
+  melodyBus.connect(tape);
+  bassBus.connect(tape);
+
+  const sharedBuses = {
+    ctx, drums, undertone, master, reverb: sceneReverb.input, pops, noiseBuf, wobbleAmt,
+  };
+  const voices = createVoices({ ...sharedBuses, tape });
+  const chordVoices = createVoices({ ...sharedBuses, tape: chordBus });
+  const melodyVoices = createVoices({ ...sharedBuses, tape: melodyBus });
+  const bassVoices = createVoices({ ...sharedBuses, tape: bassBus });
+
+  // ---- channel meters ----
+  function makeMeter(node: AudioNode): AnalyserNode {
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    an.smoothingTimeConstant = 0.55;
+    node.connect(an);
+    return an;
+  }
+  const meters: Record<ChannelId, AnalyserNode> = {
+    chords: makeMeter(chordBus),
+    melody: makeMeter(melodyBus),
+    bass: makeMeter(bassBus),
+    drums: makeMeter(drums),
+    ambience: makeMeter(ambienceBus),
+  };
+  // per-channel sensitivity so quiet roles still register on the meter
+  const METER_GAIN: Record<ChannelId, number> = {
+    chords: 6, melody: 13, bass: 8, drums: 6, ambience: 16,
+  };
+  const meterBuf = new Float32Array(512);
 
   // ---- voice dispatch ----
   type NotePlayer = (note: string, t: number, dur: number, vel: number) => void;
 
   const chordPlayers: Record<ChordVoice, NotePlayer> = {
-    ep: voices.playKey,
-    fmep: voices.playFmKey,
-    organ: voices.playOrgan,
-    guitar: voices.playGuitar,
-    vibe: voices.playVibe,
-    strings: voices.playStrings,
-    pluck: voices.playPluck,
-    marimba: voices.playMarimba,
-    choir: voices.playChoir,
-    horn: voices.playHorn,
+    ep: chordVoices.playKey,
+    fmep: chordVoices.playFmKey,
+    organ: chordVoices.playOrgan,
+    guitar: chordVoices.playGuitar,
+    vibe: chordVoices.playVibe,
+    strings: chordVoices.playStrings,
+    pluck: chordVoices.playPluck,
+    marimba: chordVoices.playMarimba,
+    choir: chordVoices.playChoir,
+    horn: chordVoices.playHorn,
   };
 
   const melodyPlayers: Record<MelodyVoice, NotePlayer> = {
-    ep: voices.playKey,
-    fmep: voices.playFmKey,
-    pluck: voices.playPluck,
-    guitar: voices.playGuitar,
-    vibe: voices.playVibe,
-    bell: (note, t, _dur, vel) => voices.playBell(note, t, vel * 0.7),
-    clarinet: voices.playClarinet,
-    horn: voices.playHorn,
-    marimba: voices.playMarimba,
-    choir: voices.playChoir,
+    ep: melodyVoices.playKey,
+    fmep: melodyVoices.playFmKey,
+    pluck: melodyVoices.playPluck,
+    guitar: melodyVoices.playGuitar,
+    vibe: melodyVoices.playVibe,
+    bell: (note, t, _dur, vel) => melodyVoices.playBell(note, t, vel * 0.7),
+    clarinet: melodyVoices.playClarinet,
+    horn: melodyVoices.playHorn,
+    marimba: melodyVoices.playMarimba,
+    choir: melodyVoices.playChoir,
   };
 
   const bassPlayers: Record<BassVoice, NotePlayer | null> = {
-    sine: voices.playBass,
-    pluck: voices.playPluckBass,
-    bassGuitar: voices.playBassGuitar,
+    sine: bassVoices.playBass,
+    pluck: bassVoices.playPluckBass,
+    bassGuitar: bassVoices.playBassGuitar,
     none: null,
   };
 
@@ -199,7 +242,15 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   };
 
   // ---- scene state ----
+  /** Where the theme lives in the scale — melody fills wander from here. */
+  function motifAnchor(s: Scene): number {
+    return Math.round(
+      s.motif.reduce((sum, n) => sum + n.scaleIdx, 0) / Math.max(1, s.motif.length),
+    );
+  }
+
   let scene = makeScene(config.mood);
+  let fillIdx = motifAnchor(scene);
   let pendingMood: MoodKey | null = null;
   let step = 0;
   let chordIdx = -1;
@@ -239,6 +290,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   /** The seamless segue: swap scenes at a chord boundary. */
   function beginScene(next: Scene, t: number) {
     scene = next;
+    fillIdx = motifAnchor(next);
     sceneStartedAt = t;
     round = 0;
     outroStarted = false;
@@ -476,10 +528,10 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
 
     scheduleComping(t, sixteenth, energy, chord);
 
-    // warm pad swell underneath
+    // warm pad swell underneath (meters with the chords)
     if (scene.padOn && energy >= 0.45) {
       const padNotes = [12, 19, 26].map((iv) => noteFromMidi(chord.rootMidi + iv));
-      voices.playPad(padNotes, t, chordDur, 0.03 + 0.025 * energy);
+      chordVoices.playPad(padNotes, t, chordDur, 0.03 + 0.025 * energy);
     }
 
     // quiet sub undertone — drifts root → fifth, stays under the main voices
@@ -638,14 +690,32 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
       }
     }
 
-    // sparse free melody, behind the beat
-    const freeChance =
-      scene.band.melodyBehavior === "sparse" ? 0.18
-      : scene.band.melodyBehavior === "held" ? 0.04
-      : 0.08;
-    if (step % 2 === 0 && step !== 0 && chance(freeChance * energy)) {
-      const note = scene.scale[Math.floor(Math.random() * scene.scale.length)];
-      playMelodyNote(note, t + 0.03 + h(), beatLen * 1.2, 0.07 + Math.random() * 0.03);
+    // melody fills, behind the beat: short stepwise gestures that wander
+    // from where the theme lives and lean on chord tones — a player
+    // noodling along with the song, not random notes from the scale.
+    // Motif/arp bands keep fills out of the theme's chords (1 and 3).
+    const behavior = scene.band.melodyBehavior;
+    const freeChance = behavior === "sparse" ? 0.2 : behavior === "held" ? 0.04 : 0.1;
+    const inGap = behavior === "sparse" || behavior === "held" || chordIdx % 2 === 1;
+    if (inGap && step % 2 === 0 && step !== 0 && step <= 26 && chance(freeChance * energy)) {
+      const wander = Math.max(
+        1,
+        Math.min(scene.scale.length - 2, fillIdx + pick([-2, -1, -1, 1, 1, 2])),
+      );
+      let idx = snapToChordTone(wander, chord);
+      const count = chance(0.35) ? 2 : 1;
+      for (let i = 0; i < count; i++) {
+        playMelodyNote(
+          scene.scale[idx],
+          t + i * sixteenth * 2 + 0.03 + h(),
+          beatLen * (i === count - 1 ? 1.3 : 0.7),
+          0.055 + Math.random() * 0.03,
+        );
+        if (i < count - 1) {
+          idx = Math.max(0, Math.min(scene.scale.length - 1, idx + pick([-1, 1])));
+        }
+      }
+      fillIdx = idx;
     }
 
     // per-bed ambience grain (fire crackles)
@@ -715,6 +785,17 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
       const dur = sceneDurationSecs(scene.rounds, scene.bpm);
       if (dur <= 0) return 0;
       return Math.min(1, Math.max(0, (ctx.currentTime - sceneStartedAt) / dur));
+    },
+    getChannelLevels() {
+      const out = {} as ChannelLevels;
+      for (const id of Object.keys(meters) as ChannelId[]) {
+        meters[id].getFloatTimeDomainData(meterBuf);
+        let sum = 0;
+        for (let i = 0; i < meterBuf.length; i++) sum += meterBuf[i] * meterBuf[i];
+        const rms = Math.sqrt(sum / meterBuf.length);
+        out[id] = Math.max(0, Math.min(1, rms * METER_GAIN[id]));
+      }
+      return out;
     },
     dispose() {
       document.removeEventListener("visibilitychange", onVisibilityChange);

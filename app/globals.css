@@ -28,6 +28,7 @@
   --animate-twinkle: twinkle 9s ease-in-out infinite;
   --animate-breathe: breathe 3.3s ease-in-out infinite;
   --animate-drift-in: drift-in 2.4s ease-out both;
+  --animate-drift-out: drift-out 2s ease-in both;
 
   @keyframes twinkle {
     0%, 100% { opacity: 0.07; }
@@ -43,11 +44,57 @@
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
+  @keyframes drift-out {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(8px); }
+  }
 }
 
 body {
   background: var(--color-night);
   color: var(--color-ink);
+}
+
+/* registered so the mood tint cross-fades instead of snapping */
+@property --mood-dusk {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #141229;
+}
+
+.mood-bg {
+  background: radial-gradient(
+    120% 90% at 50% 0%,
+    var(--mood-dusk) 0%,
+    var(--color-night-mid) 55%,
+    var(--color-night) 100%
+  );
+  transition: --mood-dusk 4s ease;
+}
+
+/* vinyl grain: a generated noise tile jumping like film weave */
+@keyframes noise-shift {
+  0% { background-position: 0 0; }
+  12% { background-position: -28px 17px; }
+  25% { background-position: 33px -9px; }
+  37% { background-position: -5px 41px; }
+  50% { background-position: 19px 25px; }
+  62% { background-position: -37px -31px; }
+  75% { background-position: 11px -14px; }
+  87% { background-position: -22px 38px; }
+  100% { background-position: 0 0; }
+}
+
+.noise-overlay {
+  animation: noise-shift 0.5s steps(1, end) infinite;
+  transition: opacity 1.4s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noise-overlay {
+    animation: none;
+  }
 }
 
 @layer components {

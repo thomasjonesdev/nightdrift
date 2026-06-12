@@ -94,9 +94,12 @@ Engine lifetime is tied to a play session: stopping disposes the context entirel
 | Component | Role |
 |-----------|------|
 | `Nightdrift` | Page shell: header, halo button, now-playing readout, footer controls |
-| `HaloButton` | Primary control; SVG ring shows elapsed fraction of the current scene |
+| `HaloButton` | Primary control; SVG progress ring for the scene, a counter-clockwise sleep-timer ring (remaining / 60 m), plus one concentric ring per active channel (from `scene.lineup`) glowing with live amplitude polled via `getChannelLevels()` on its own rAF loop |
+| `NoiseOverlay` | Full-screen film grain (canvas-generated tile) that fades in while vinyl crackle is on during playback |
 | `Pill` | Reusable active/inactive chip for mood, timer, and crackle toggles |
 | `Starfield` | CSS-animated background stars |
+
+The page background tint is per-mood: `--mood-dusk` (registered via `@property`) feeds the radial gradient and cross-fades over 4 s when the mood changes.
 
 Controls map directly to hook methods: mood → `setMood`, volume → `setVolumeDb`, timer → `setTimer`, crackle → `setCrackleOn`.
 
@@ -118,17 +121,23 @@ The engine (`lib/audio/engine.ts`) is a closure around an `AudioContext` and a l
 ```
 Voices (one-shots)
   │
-  ├─ melodic ──► tape (lowpass) ──► mix dynamics ──► master ──► MediaStreamDestination
-  │                    │                ▲
-  │                    └── reverb send ──┘ (return feeds mix bus)
+  ├─ chords / melody / bass ──► role buses ──► tape (lowpass) ──► mix dynamics ──► master ──► MediaStreamDestination
+  │                                  │              │                ▲
+  │                                  │              └── reverb send ──┘ (return feeds mix bus)
+  │                                  └── analysers (per-channel meters for the band stage UI)
   │
-  ├─ drums ──► drum dynamics ──► master
+  ├─ drums ──► drum dynamics ──► master   (+ analyser)
   ├─ undertone (sub) ──► master
   ├─ vinyl hiss / pops ──► master
-  └─ ambience beds ──► master
+  └─ ambience beds ──► ambience bus ──► master   (+ analyser)
 
 master ──► ctx.destination (fallback if PlaybackSink unavailable)
 ```
+
+Each band role (chords, melody, bass) plays through its own gain bus into the
+tape filter, and an `AnalyserNode` taps each role bus plus drums and ambience.
+`getChannelLevels()` returns live RMS per channel (0–1) so the UI can animate
+the band.
 
 Supporting nodes:
 
@@ -182,7 +191,7 @@ A **scene** is one imaginary track. `makeScene(family, prev?)` picks:
 
 Three mood families (`moods.ts`): **mellow** (warm major study-beats), **jazzy** (ii–V–I smoky), **rainy** (minor, slower). Each family defines allowed keys, progressions, scale pools, BPM ranges, and name lists.
 
-`SceneSummary` is the UI-facing subset: name, family, key, bpm, rounds, band display name.
+`SceneSummary` is the UI-facing subset: name, family, key, bpm, rounds, band display name, chord symbols, and the **lineup** (chord/melody/bass voices, kit, ambience bed) that drives the band stage.
 
 ### Bands (`bands.ts`)
 
@@ -212,7 +221,7 @@ Melodic voices share tape wobble via `wobbleAmt`. Ambient one-shots (thunder, tr
 
 ### Ambience (`ambience.ts`)
 
-Environmental beds sit under the music. Each bed is looped, filtered noise with slow LFO movement. `set(spec, time, fast?)` crossfades bed level at scene segues. `sparkle(t)` fires per-step grain (e.g. fire crackles). Bed choice is weighted by mood family.
+Environmental beds sit under the music — present enough to hear, not loud enough to compete. Each bed is looped, filtered noise with slow LFO movement (rain adds a high droplet-patter layer so it reads as rain over the mix). `set(spec, time, fast?)` crossfades bed level at scene segues. `sparkle(t)` fires per-step grain (e.g. fire crackles). Bed choice is weighted by mood family; most scenes carry a bed.
 
 ### Randomness (`random.ts`)
 

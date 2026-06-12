@@ -17,14 +17,14 @@ export interface AmbienceSpec {
 }
 
 const BED_WEIGHTS: Record<MoodKey, [AmbienceBed, number][]> = {
-  mellow: [["none", 0.35], ["fire", 0.25], ["rain", 0.2], ["wind", 0.2]],
-  jazzy: [["none", 0.4], ["city", 0.35], ["rain", 0.25]],
-  rainy: [["rain", 0.65], ["wind", 0.2], ["city", 0.15]],
+  mellow: [["none", 0.18], ["fire", 0.3], ["rain", 0.26], ["wind", 0.26]],
+  jazzy: [["none", 0.2], ["city", 0.45], ["rain", 0.35]],
+  rainy: [["rain", 0.7], ["wind", 0.18], ["city", 0.12]],
 };
 
 export function pickAmbience(family: MoodKey): AmbienceSpec {
   const bed = weightedPick(BED_WEIGHTS[family], (e) => e[1])[0];
-  const level = bed === "none" ? 0 : family === "rainy" ? rand(0.55, 1) : rand(0.25, 0.6);
+  const level = bed === "none" ? 0 : family === "rainy" ? rand(0.65, 1) : rand(0.45, 0.8);
   return { bed, level };
 }
 
@@ -68,7 +68,8 @@ export function createAmbience(
 
   const beds: Partial<Record<AmbienceBed, Bed>> = {};
 
-  // rain: bandpassed noise with slow gusts
+  // rain: bandpassed noise body with slow gusts, plus a quieter
+  // high droplet-patter layer so it reads as rain over the music
   {
     const bp = ctx.createBiquadFilter();
     bp.type = "bandpass";
@@ -77,10 +78,17 @@ export function createAmbience(
     const g = ctx.createGain();
     g.gain.value = 0;
     noiseSrc(0.85).connect(bp).connect(g).connect(out);
+    const patter = ctx.createBiquadFilter();
+    patter.type = "bandpass";
+    patter.frequency.value = 2700;
+    patter.Q.value = 0.7;
+    const patterG = ctx.createGain();
+    patterG.gain.value = 0.55;
+    noiseSrc(1.1).connect(patter).connect(patterG).connect(g);
     const amt = ctx.createGain();
     amt.gain.value = 0;
     lfo(0.06).connect(amt).connect(g.gain);
-    beds.rain = { gain: g, base: 0.02, lfoAmt: amt, lfoScale: 0.4 };
+    beds.rain = { gain: g, base: 0.055, lfoAmt: amt, lfoScale: 0.4 };
   }
 
   // wind: dark noise whose cutoff and level both breathe slowly
@@ -97,7 +105,7 @@ export function createAmbience(
     const amt = ctx.createGain();
     amt.gain.value = 0;
     lfo(0.045).connect(amt).connect(g.gain);
-    beds.wind = { gain: g, base: 0.018, lfoAmt: amt, lfoScale: 0.35 };
+    beds.wind = { gain: g, base: 0.05, lfoAmt: amt, lfoScale: 0.35 };
   }
 
   // city: low traffic rumble with a barely-there swell
@@ -111,7 +119,7 @@ export function createAmbience(
     const amt = ctx.createGain();
     amt.gain.value = 0;
     lfo(0.03).connect(amt).connect(g.gain);
-    beds.city = { gain: g, base: 0.024, lfoAmt: amt, lfoScale: 0.25 };
+    beds.city = { gain: g, base: 0.065, lfoAmt: amt, lfoScale: 0.25 };
   }
 
   // fire: warm hush; the crackle comes from sparkle()
@@ -122,7 +130,7 @@ export function createAmbience(
     const g = ctx.createGain();
     g.gain.value = 0;
     noiseSrc(0.55).connect(lp).connect(g).connect(out);
-    beds.fire = { gain: g, base: 0.012 };
+    beds.fire = { gain: g, base: 0.035 };
   }
 
   let current: AmbienceBed = "none";
@@ -152,7 +160,7 @@ export function createAmbience(
         lp.frequency.value = 1600;
         const g = ctx.createGain();
         const at = t + i * rand(0.03, 0.12);
-        g.gain.setValueAtTime((0.01 + Math.random() * 0.025) * level, at);
+        g.gain.setValueAtTime((0.02 + Math.random() * 0.045) * level, at);
         g.gain.exponentialRampToValueAtTime(0.0001, at + 0.02 + Math.random() * 0.05);
         n.connect(lp).connect(g).connect(out);
         n.start(at);

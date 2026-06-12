@@ -4,9 +4,18 @@ import { useSyncExternalStore } from "react";
 import { useNightdrift } from "@/hooks/use-nightdrift";
 import { MOODS, TIMERS, type MoodKey } from "@/lib/audio/moods";
 import { pick } from "@/lib/audio/random";
+import DriftPresence from "./drift-presence";
 import HaloButton from "./halo-button";
+import NoiseOverlay from "./noise-overlay";
 import Pill from "./pill";
 import Starfield from "./starfield";
+
+// dusk tint at the top of the sky, per mood — warm plum, smoky blue, rain slate
+const MOOD_DUSK: Record<MoodKey, string> = {
+  mellow: "#1e152a",
+  jazzy: "#121a31",
+  rainy: "#0e1d27",
+};
 
 const TAGLINES = {
   morning: [
@@ -86,13 +95,17 @@ export default function Nightdrift() {
     mood, setMood,
     volumeDb, setVolumeDb,
     crackleOn, setCrackleOn,
-    timerMin, setTimer, remaining,
-    scene, sceneProgress,
+    timerMin, setTimer, remaining, timerProgress,
+    scene, sceneProgress, getChannelLevels,
   } = useNightdrift();
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center overflow-hidden bg-[radial-gradient(120%_90%_at_50%_0%,var(--color-dusk)_0%,var(--color-night-mid)_55%,var(--color-night)_100%)] font-display text-ink">
+    <div
+      className="mood-bg relative flex min-h-screen flex-col items-center overflow-hidden font-display text-ink"
+      style={{ "--mood-dusk": MOOD_DUSK[mood] } as React.CSSProperties}
+    >
       <Starfield />
+      <NoiseOverlay active={crackleOn} />
 
       <header className="z-10 pt-11 text-center">
         <div className="text-[26px] lowercase tracking-[0.35em] text-parchment">Nightdrift</div>
@@ -105,28 +118,38 @@ export default function Nightdrift() {
         <HaloButton
           playing={playing}
           progress={sceneProgress}
+          lineup={scene?.lineup ?? null}
+          getLevels={getChannelLevels}
+          timerProgress={timerProgress}
           onClick={playing ? () => stop() : start}
         />
 
         <div className="mt-7 flex h-20 flex-col items-center gap-1.5">
-          {playing && scene && (
-            <div key={scene.name} className="animate-drift-in text-center">
-              <span className="text-[15px] italic tracking-[0.06em] text-parchment/90">
-                {scene.name}
-              </span>
-              <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
-                {scene.band} · {scene.keyName} · {scene.bpm} bpm
-              </span>
-              <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
-                {scene.progression.map((p) => p.name).join(" → ")}
-              </span>
-            </div>
-          )}
-          {remaining !== null && (
-            <div className="font-sans text-[13px] tracking-[0.08em] text-haze-soft">
-              fading out in <span className="font-mono">{formatTime(remaining)}</span>
-            </div>
-          )}
+          <DriftPresence show={playing && !!scene}>
+            {scene && (
+              <div
+                key={scene.name}
+                className="animate-drift-in motion-reduce:animate-none text-center"
+              >
+                <span className="text-[15px] italic tracking-[0.06em] text-parchment/90">
+                  {scene.name}
+                </span>
+                <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
+                  {scene.band} · {scene.keyName} · {scene.bpm} bpm
+                </span>
+                <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
+                  {scene.progression.map((p) => p.name).join(" → ")}
+                </span>
+              </div>
+            )}
+          </DriftPresence>
+          <DriftPresence show={remaining !== null}>
+            {remaining !== null && (
+              <div className="animate-drift-in motion-reduce:animate-none font-sans text-[13px] tracking-[0.08em] text-haze-soft">
+                <span className="font-mono">{formatTime(remaining)}</span>
+              </div>
+            )}
+          </DriftPresence>
         </div>
       </main>
 

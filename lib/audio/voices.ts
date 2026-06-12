@@ -6,8 +6,8 @@ import { freq } from "./notes";
 
 export interface Buses {
   ctx: AudioContext;
-  /** Melodic bus: "old tape" lowpass into master + reverb. */
-  tape: BiquadFilterNode;
+  /** Melodic bus: "old tape" lowpass into master + reverb (or a role bus feeding it). */
+  tape: AudioNode;
   /** Drum bus: fadeable for segues and dropouts. */
   drums: GainNode;
   /** Sub-bass undertone bus — sits under the mix for main voices to breathe around. */
