@@ -1,10 +1,65 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import { useNightdrift } from "@/hooks/use-nightdrift";
 import { MOODS, TIMERS, type MoodKey } from "@/lib/audio/moods";
+import { pick } from "@/lib/audio/random";
 import HaloButton from "./halo-button";
 import Pill from "./pill";
 import Starfield from "./starfield";
+
+const TAGLINES = {
+  morning: [
+    "take your time waking into today",
+    "no rush — the morning can wait",
+    "breathe before the day begins",
+    "start slow, you've got all day",
+  ],
+  afternoon: [
+    "pause here — the day's still yours",
+    "somewhere in the middle of your day",
+    "you've earned a quiet moment",
+    "let the afternoon soften a little",
+  ],
+  evening: [
+    "let the weight of the day ease off",
+    "you made it through — now unwind",
+    "leave today behind, slowly",
+    "the evening is yours to settle into",
+  ],
+  night: [
+    "close the day, gently",
+    "it's okay to stop now",
+    "whatever today was, you can let it go",
+    "rest — tomorrow isn't here yet",
+    "the day is done; drift off when you're ready",
+  ],
+} as const;
+
+function periodForHour(hour: number): keyof typeof TAGLINES {
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 17) return "afternoon";
+  if (hour >= 17 && hour < 21) return "evening";
+  return "night";
+}
+
+let clientTagline: string | null = null;
+
+function subscribeTagline(onChange: () => void) {
+  if (clientTagline === null) {
+    clientTagline = pick(TAGLINES[periodForHour(new Date().getHours())]);
+    onChange();
+  }
+  return () => {};
+}
+
+function getTagline() {
+  return clientTagline ?? "";
+}
+
+function useTagline() {
+  return useSyncExternalStore(subscribeTagline, getTagline, () => "");
+}
 
 function formatTime(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60);
@@ -24,6 +79,8 @@ function ControlRow({ label, children }: { label: string; children: React.ReactN
 }
 
 export default function Nightdrift() {
+  const tagline = useTagline();
+
   const {
     playing, start, stop,
     mood, setMood,
@@ -38,9 +95,9 @@ export default function Nightdrift() {
       <Starfield />
 
       <header className="z-10 pt-11 text-center">
-        <div className="text-[26px] lowercase tracking-[0.35em] text-parchment">nightdrift</div>
-        <div className="mt-2.5 font-sans text-xs uppercase tracking-[0.2em] text-haze">
-          generative lofi for sleep
+        <div className="text-[26px] lowercase tracking-[0.35em] text-parchment">Nightdrift</div>
+        <div className="mt-2.5 min-h-lh font-sans text-xs uppercase tracking-[0.2em] text-haze">
+          {tagline}
         </div>
       </header>
 
@@ -59,6 +116,9 @@ export default function Nightdrift() {
               </span>
               <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
                 {scene.band} · {scene.keyName} · {scene.bpm} bpm
+              </span>
+              <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
+                {scene.progression.map((p) => p.name).join(" → ")}
               </span>
             </div>
           )}

@@ -447,6 +447,56 @@ export function createVoices(buses: Buses) {
     }
   }
 
+  /**
+   * Finger-style bass guitar: triangle body with a touch of saw growl, a
+   * plucked filter sweep, and a tiny pick transient — round enough to sit
+   * under the chords, present enough to carry a rhythm line.
+   */
+  function playBassGuitar(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(Math.min(f * 7, 1300), time);
+    lp.frequency.exponentialRampToValueAtTime(
+      Math.max(f * 2.2, 130),
+      time + Math.min(dur * 0.6, 0.5),
+    );
+    lp.Q.value = 1.1;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(vel, time + 0.012);
+    g.gain.exponentialRampToValueAtTime(vel * 0.45, time + dur * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    lp.connect(g).connect(tape);
+
+    const body = ctx.createOscillator();
+    body.type = "triangle";
+    body.frequency.value = f;
+    body.connect(lp);
+    const growl = ctx.createOscillator();
+    growl.type = "sawtooth";
+    growl.frequency.value = f;
+    growl.detune.value = 3;
+    const growlG = ctx.createGain();
+    growlG.gain.value = 0.16;
+    growl.connect(growlG).connect(lp);
+    body.start(time); growl.start(time);
+    body.stop(time + dur + 0.1); growl.stop(time + dur + 0.1);
+
+    // pick transient
+    const n = ctx.createBufferSource();
+    n.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 1100;
+    bp.Q.value = 1.8;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(vel * 0.12, time);
+    ng.gain.exponentialRampToValueAtTime(0.0001, time + 0.03);
+    n.connect(bp).connect(ng).connect(tape);
+    n.start(time); n.stop(time + 0.05);
+  }
+
   /** Round sine bass. */
   function playBass(note: string, time: number, dur: number, vel: number) {
     const o = ctx.createOscillator();
@@ -696,7 +746,7 @@ export function createVoices(buses: Buses) {
   }
 
   return {
-    playKey, playPluck, playBell, playPad, playBass, playUndertone,
+    playKey, playPluck, playBell, playPad, playBass, playBassGuitar, playUndertone,
     playGuitar, playPluckBass, playFmKey, playOrgan, playStrings, playVibe,
     playMarimba, playClarinet, playChoir, playHorn,
     playKick, playSnare, playHat, playShaker, playRim, playBrush,

@@ -5,24 +5,35 @@
 // segues into the next one.
 
 import { pickAmbience, type AmbienceSpec } from "./ambience";
-import { assembleBand, type Band } from "./bands";
+import { assembleBand, KITS, type Band } from "./bands";
 import type { MoodKey } from "./moods";
 import { noteFromMidi, pitchClassName } from "./notes";
-import { chance, pick, rand, randInt } from "./random";
+import { chance, pick, rand, randInt, weightedPick } from "./random";
 
 // ---- harmony ---------------------------------------------------------------
 
-// EP voicings as semitone offsets above the bass root (derived from
+/**
+ * Each scene voices its chords with one character:
+ * - cozy:  close-position 9th clusters (the original hand voicings)
+ * - open:  spread voicings with the 7th low — airier, more pianistic
+ * - shell: just the essentials (3rd/7th + one color tone) — smoky, leaves room
+ */
+export type VoicingStyle = "cozy" | "open" | "shell";
+
+// Voicings as semitone offsets above the bass root (derived from
 // hand-voiced lofi chords: 9ths clustered in the 3rd/4th octave).
 const QUALITIES = {
-  maj9: [16, 19, 23, 26],
-  maj69: [16, 19, 21, 26],
-  min9: [15, 19, 22, 26],
-  min9lo: [10, 14, 15, 19],
-  min9hi: [14, 15, 19, 22],
-  dom9: [16, 19, 22, 26],
-  dom13: [10, 14, 16, 21],
-} as const;
+  maj9: { cozy: [16, 19, 23, 26], open: [11, 16, 19, 26], shell: [11, 16, 26] },
+  maj7: { cozy: [12, 16, 19, 23], open: [11, 16, 19, 24], shell: [11, 16, 24] },
+  maj69: { cozy: [16, 19, 21, 26], open: [9, 14, 16, 21], shell: [9, 16, 26] },
+  min9: { cozy: [15, 19, 22, 26], open: [10, 15, 19, 26], shell: [10, 15, 26] },
+  min9lo: { cozy: [10, 14, 15, 19], open: [10, 15, 19, 26], shell: [10, 15, 19] },
+  min9hi: { cozy: [14, 15, 19, 22], open: [15, 19, 22, 26], shell: [15, 22, 26] },
+  min11: { cozy: [15, 17, 19, 22], open: [10, 15, 17, 22], shell: [10, 17, 22] },
+  dom9: { cozy: [16, 19, 22, 26], open: [10, 16, 19, 26], shell: [10, 16, 26] },
+  dom13: { cozy: [10, 14, 16, 21], open: [10, 16, 21, 26], shell: [10, 16, 21] },
+  dom7sus: { cozy: [14, 17, 22, 24], open: [10, 17, 22, 26], shell: [10, 17, 24] },
+} as const satisfies Record<string, Record<VoicingStyle, readonly number[]>>;
 
 type Quality = keyof typeof QUALITIES;
 
@@ -36,6 +47,8 @@ export interface Chord {
   /** Bass root, e.g. "F2". */
   root: string;
   rootMidi: number;
+  /** Semitones from root to the chord's defining third (3 minor, 4 major, 5 sus). */
+  thirdIv: number;
   /** Chord voicing for the keys, low to high. */
   notes: string[];
 }
@@ -65,6 +78,13 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
         { degree: 2, quality: "min9" },
         { degree: 0, quality: "maj9" },
       ],
+      // I VI ii V — the other circle of fifths
+      [
+        { degree: 0, quality: "maj9" },
+        { degree: 8, quality: "dom13" },
+        { degree: 2, quality: "dom9" },
+        { degree: 7, quality: "min9" },
+      ],
       // I vi IV V
       [
         { degree: 0, quality: "maj9" },
@@ -85,6 +105,13 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
         { degree: 7, quality: "dom13" },
         { degree: 4, quality: "min9" },
         { degree: 9, quality: "min9" },
+      ],
+      // I Vsus IV iii — suspended daydream
+      [
+        { degree: 0, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 5, quality: "maj69" },
+        { degree: 4, quality: "min11" },
       ],
     ],
     scaleOffsets: [4, 7, 9, 11, 12, 14, 16, 19],
@@ -128,6 +155,13 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
         { degree: 0, quality: "maj9" },
         { degree: 5, quality: "maj9" },
       ],
+      // ii11 Vsus I69 IVmaj7 — the resolution arrives sideways
+      [
+        { degree: 2, quality: "min11" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 0, quality: "maj69" },
+        { degree: 5, quality: "maj7" },
+      ],
     ],
     scaleOffsets: [9, 12, 14, 16, 19, 21, 24],
     names: [
@@ -170,6 +204,13 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
         { degree: 8, quality: "maj9" },
         { degree: 7, quality: "dom9" },
       ],
+      // i11 bVImaj7 bIII bVIIsus — rain through an open window
+      [
+        { degree: 0, quality: "min11" },
+        { degree: 8, quality: "maj7" },
+        { degree: 3, quality: "maj9" },
+        { degree: 10, quality: "dom7sus" },
+      ],
     ],
     scaleOffsets: [12, 15, 17, 19, 22, 24, 27],
     names: [
@@ -194,11 +235,14 @@ export interface MotifNote {
 }
 
 function makeMotif(scaleLen: number): MotifNote[] {
-  const count = randInt(3, 5);
+  const count = randInt(4, 6);
   const notes: MotifNote[] = [];
   let step = randInt(1, 3) * 2;
-  let idx = randInt(2, scaleLen - 2);
+  const startIdx = randInt(2, scaleLen - 2);
+  let idx = startIdx;
   for (let i = 0; i < count; i++) {
+    // the phrase relaxes back toward where it began, like a hummed tune resolving
+    if (i === count - 1) idx = startIdx + pick([-1, 0, 0, 1]);
     notes.push({
       scaleIdx: Math.max(0, Math.min(scaleLen - 1, idx)),
       step,
@@ -207,9 +251,85 @@ function makeMotif(scaleLen: number): MotifNote[] {
     });
     step += pick([2, 2, 3, 4, 6]);
     if (step > 28) break;
-    idx += pick([-2, -1, -1, 1, 1, 2]); // mostly stepwise, like a hummed tune
+    idx += pick([-2, -1, -1, 1, 1, 2]); // mostly stepwise
   }
   return notes;
+}
+
+/**
+ * Named transformations of the scene's motif. The engine states the plain
+ * theme early, then cycles the scene's variation order through the middle
+ * rounds, so the listener hears theme → variation → return instead of a
+ * new random phrase each time.
+ */
+export type MotifVariation =
+  | "plain"      // the theme as written
+  | "answer"     // the theme shifted by the scene's answerShift
+  | "lift"       // raised a couple of scale steps, slightly softer
+  | "displaced"  // pushed late by an eighth, leaning behind the beat
+  | "ornament"   // grace notes from below decorate the long tones
+  | "fragment";  // just the head of the phrase, an echo
+
+function makeVariationOrder(): MotifVariation[] {
+  const pool: MotifVariation[] = ["lift", "displaced", "ornament"];
+  const a = pick(pool);
+  let b = pick(pool);
+  while (b === a) b = pick(pool);
+  return ["plain", a, b];
+}
+
+// ---- bass riff ---------------------------------------------------------------
+
+export type RiffDeg = "root" | "third" | "fifth" | "octave" | "approach";
+
+export interface RiffNote {
+  /** 16th-note position within the chord's two bars (0–31). */
+  step: number;
+  /** Chord-relative degree; "approach" leans chromatically into the next chord. */
+  deg: RiffDeg;
+  /** Duration in beats. */
+  beats: number;
+  /** 0–1 within the riff; the engine drops quieter notes at low energy. */
+  vel: number;
+}
+
+/**
+ * A two-bar bass-guitar figure, generated once per scene and repeated under
+ * every chord — the rhythmic theme of the scene. Syncopations land on (or
+ * just after) the kit's kicks so bass and drums feel like one player.
+ */
+function makeBassRiff(kickSteps: number[]): RiffNote[] {
+  const riff: RiffNote[] = [
+    { step: 0, deg: "root", beats: rand(1.2, 1.8), vel: 1 },
+    { step: 16, deg: chance(0.6) ? "root" : "fifth", beats: rand(1, 1.5), vel: 0.9 },
+  ];
+  const taken = new Set([0, 16]);
+
+  // syncopated answers: on the kick, or the "and" right after it
+  const candidates = kickSteps
+    .filter((s) => s !== 0 && s !== 16)
+    .flatMap((s) => [s, s + 2])
+    .concat([10, 22, 26])
+    .filter((s) => s > 0 && s < 30 && !taken.has(s));
+  const count = randInt(2, 4);
+  for (let i = 0; i < count && candidates.length > 0; i++) {
+    const s = candidates.splice(randInt(0, candidates.length - 1), 1)[0];
+    if (taken.has(s)) continue;
+    taken.add(s);
+    const deg: RiffDeg =
+      s >= 26 && chance(0.6)
+        ? "approach" // walk into the next chord
+        : pick(["root", "root", "octave", "fifth", "fifth", "third"]);
+    riff.push({ step: s, deg, beats: rand(0.5, 1), vel: rand(0.5, 0.75) });
+  }
+
+  // an occasional ghosted offbeat 16th, felt more than heard
+  if (chance(0.45)) {
+    const s = pick([7, 15, 23]);
+    if (!taken.has(s)) riff.push({ step: s, deg: "root", beats: 0.3, vel: 0.3 });
+  }
+
+  return riff.sort((a, b) => a.step - b.step);
 }
 
 // ---- scenes ------------------------------------------------------------------
@@ -228,12 +348,18 @@ export interface Scene {
   motif: MotifNote[];
   /** Scale-step shift applied when the motif is "answered" later in a round. */
   answerShift: number;
+  /** Variations cycled through the grooving middle rounds, in order. */
+  variationOrder: MotifVariation[];
   /** Full 8-bar passes through the progression before the next segue. */
   rounds: number;
   // performance
   band: Band;
+  /** How this scene's chords are voiced (cozy clusters, open spreads, shells). */
+  voicingStyle: VoicingStyle;
   /** Band's bass style with "either" resolved per scene. */
-  bassStyle: "anchor" | "walking";
+  bassStyle: "anchor" | "walking" | "groove";
+  /** Two-bar bass figure for the "groove" style, locked to the kit's kicks. */
+  bassRiff: RiffNote[];
   padOn: boolean;
   ambience: AmbienceSpec;
   tapeCutoff: number;
@@ -242,6 +368,11 @@ export interface Scene {
   reverbSend: number;
   reverbDecay: number;
   reverbDamp: number;
+}
+
+export interface ProgressionStepSummary {
+  /** Chord symbol for the now-playing readout, e.g. "Fmaj9" or "Em7". */
+  name: string;
 }
 
 export interface SceneSummary {
@@ -253,21 +384,82 @@ export interface SceneSummary {
   rounds: number;
   /** Display name of the band playing this scene. */
   band: string;
+  progression: ProgressionStepSummary[];
+}
+
+function chordDisplayName(root: string, quality: Quality): string {
+  const pc = root.replace(/-?\d$/, "");
+  if (quality.includes("sus")) return `${pc}sus`;
+  if (quality.startsWith("min")) return `${pc}m`;
+  if (quality.startsWith("dom")) return `${pc}7`;
+  return pc;
 }
 
 export function summarize(scene: Scene): SceneSummary {
-  const { name, family, keyName, bpm, rounds } = scene;
-  return { name, family, keyName, bpm, rounds, band: scene.band.name };
+  const { name, family, keyName, bpm, rounds, progressionIdx, progression } = scene;
+  const specs = FAMILIES[family].progressions[progressionIdx];
+  return {
+    name,
+    family,
+    keyName,
+    bpm,
+    rounds,
+    band: scene.band.name,
+    progression: progression.map((chord, i) => ({
+      name: chordDisplayName(chord.root, specs[i].quality),
+    })),
+  };
 }
 
-function buildChord(keyPc: number, spec: ChordSpec): Chord {
-  // bass roots live in octave 2 (MIDI 36–47), like a thumb on the low keys
-  const rootMidi = 36 + ((keyPc + spec.degree) % 12);
-  return {
-    root: noteFromMidi(rootMidi),
-    rootMidi,
-    notes: QUALITIES[spec.quality].map((iv) => noteFromMidi(rootMidi + iv)),
-  };
+// Keys stay in this absolute window when voice-leading (about A2–G5).
+const VOICE_LO = 45;
+const VOICE_HI = 79;
+
+/**
+ * Voice a chord so each note moves as little as possible from the previous
+ * chord — octave-displacing individual tones instead of jumping the whole
+ * shape in parallel, the way a player's hand stays put on the keys.
+ */
+function leadVoicing(rootMidi: number, shape: readonly number[], prev?: number[]): number[] {
+  const base = shape.map((iv) => rootMidi + iv);
+  if (!prev || prev.length === 0) return base;
+  const used = new Set<number>();
+  const led = base.map((p) => {
+    let best = p;
+    let bestCost = Infinity;
+    for (const cand of [p - 12, p, p + 12]) {
+      if (cand < VOICE_LO || cand > VOICE_HI || used.has(cand)) continue;
+      const cost = Math.min(...prev.map((q) => Math.abs(cand - q)));
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = cand;
+      }
+    }
+    used.add(best);
+    return best;
+  });
+  return led.sort((a, b) => a - b);
+}
+
+function thirdInterval(quality: Quality): number {
+  if (quality.includes("sus")) return 5;
+  return quality.startsWith("min") ? 3 : 4;
+}
+
+function buildProgression(keyPc: number, specs: ChordSpec[], style: VoicingStyle): Chord[] {
+  let prevVoicing: number[] | undefined;
+  return specs.map((spec) => {
+    // bass roots live in octave 2 (MIDI 36–47), like a thumb on the low keys
+    const rootMidi = 36 + ((keyPc + spec.degree) % 12);
+    const voicing = leadVoicing(rootMidi, QUALITIES[spec.quality][style], prevVoicing);
+    prevVoicing = voicing;
+    return {
+      root: noteFromMidi(rootMidi),
+      rootMidi,
+      thirdIv: thirdInterval(spec.quality),
+      notes: voicing.map(noteFromMidi),
+    };
+  });
 }
 
 function buildScale(keyPc: number, offsets: number[]): string[] {
@@ -299,6 +491,14 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
   const scale = buildScale(keyPc, cfg.scaleOffsets);
   const band = assembleBand(family, prev?.band.id);
 
+  // voicing character leans toward the band's comping: sustained voices love
+  // open spreads, stabs sit best on shells, everything else favors the clusters
+  const voicingStyle = weightedPick<VoicingStyle>(["cozy", "open", "shell"], (s) => {
+    if (band.comping === "sustained") return s === "open" ? 2 : 1;
+    if (band.comping === "stabs") return s === "shell" ? 2 : 1;
+    return s === "cozy" ? 2 : 1;
+  });
+
   return {
     family,
     name,
@@ -307,14 +507,21 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
     bpm: Math.round(rand(cfg.bpm[0], cfg.bpm[1])),
     swing: rand(0.5, 0.62),
     progressionIdx,
-    progression: cfg.progressions[progressionIdx].map((spec) => buildChord(keyPc, spec)),
+    progression: buildProgression(keyPc, cfg.progressions[progressionIdx], voicingStyle),
     scale,
     motif: makeMotif(scale.length),
     answerShift: pick([-2, -1, 1, 1, 2]),
+    variationOrder: makeVariationOrder(),
     rounds: randInt(3, 5),
     band,
+    voicingStyle,
     bassStyle:
-      band.bassStyle === "either" ? (chance(0.5) ? "walking" : "anchor") : band.bassStyle,
+      band.bassStyle === "either"
+        ? band.bassVoice === "bassGuitar"
+          ? (chance(0.7) ? "groove" : "anchor")
+          : (chance(0.5) ? "walking" : "anchor")
+        : band.bassStyle,
+    bassRiff: makeBassRiff([...KITS[band.kit].kicks]),
     padOn: chance(band.padChance * (family === "rainy" ? 1.4 : 1)),
     ambience: pickAmbience(family),
     tapeCutoff: rand(band.tapeCutoff[0], band.tapeCutoff[1]),

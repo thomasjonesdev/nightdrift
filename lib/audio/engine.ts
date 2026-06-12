@@ -28,9 +28,18 @@ import {
   type PulseVoice,
 } from "./bands";
 import type { MoodKey } from "./moods";
-import { dbToGain, noteFromMidi } from "./notes";
+import { dbToGain, midiFromNote, noteFromMidi } from "./notes";
 import { chance, randInt } from "./random";
-import { makeScene, summarize, type Chord, type Scene, type SceneSummary } from "./scenes";
+import {
+  makeScene,
+  summarize,
+  type Chord,
+  type MotifNote,
+  type MotifVariation,
+  type RiffDeg,
+  type Scene,
+  type SceneSummary,
+} from "./scenes";
 import { createVoices } from "./voices";
 
 export const STEPS = 32;             // two bars of 16ths = one chord
@@ -172,6 +181,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   const bassPlayers: Record<BassVoice, NotePlayer | null> = {
     sine: voices.playBass,
     pluck: voices.playPluckBass,
+    bassGuitar: voices.playBassGuitar,
     none: null,
   };
 
@@ -254,11 +264,63 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     melodyPlayers[scene.band.melodyVoice](note, t, dur, vel);
   }
 
-  /** State the scene's motif (or its shifted "answer") across this chord. */
-  function playMotif(t: number, sixteenth: number, shift: number, velScale: number) {
+  /** Transform the scene's theme into one of its named variations. */
+  function motifVariant(variation: MotifVariation): MotifNote[] {
+    const m = scene.motif;
+    switch (variation) {
+      case "plain":
+        return m;
+      case "answer":
+        return m.map((n) => ({ ...n, scaleIdx: n.scaleIdx + scene.answerShift }));
+      case "lift":
+        return m.map((n) => ({ ...n, scaleIdx: n.scaleIdx + 2, vel: n.vel * 0.9 }));
+      case "displaced":
+        return m.map((n) => ({ ...n, step: Math.min(30, n.step + 2) }));
+      case "ornament": {
+        const out: MotifNote[] = [];
+        for (const n of m) {
+          if (n.beats >= 1.5 && n.step >= 2 && chance(0.7)) {
+            out.push({ scaleIdx: n.scaleIdx - 1, step: n.step - 1, beats: 0.25, vel: n.vel * 0.5 });
+          }
+          out.push(n);
+        }
+        return out;
+      }
+      case "fragment":
+        return m
+          .slice(0, Math.max(2, Math.ceil(m.length / 2)))
+          .map((n) => ({ ...n, vel: n.vel * 0.8 }));
+    }
+  }
+
+  /** Nudge a scale degree onto a chord tone, for the notes that anchor a phrase. */
+  function snapToChordTone(idx: number, chord: Chord): number {
+    const pcs = new Set(chord.notes.map((n) => midiFromNote(n) % 12));
+    pcs.add(chord.rootMidi % 12);
+    for (const cand of [idx, idx - 1, idx + 1]) {
+      if (cand < 0 || cand >= scene.scale.length) continue;
+      if (pcs.has(midiFromNote(scene.scale[cand]) % 12)) return cand;
+    }
+    return idx;
+  }
+
+  /** State a variation of the scene's theme across this chord. */
+  function playMotif(
+    t: number,
+    sixteenth: number,
+    variation: MotifVariation,
+    velScale: number,
+    chord: Chord,
+  ) {
     const beatLen = sixteenth * 4;
-    for (const n of scene.motif) {
-      const idx = Math.max(0, Math.min(scene.scale.length - 1, n.scaleIdx + shift));
+    const notes = motifVariant(variation);
+    if (notes.length === 0) return;
+    const firstStep = Math.min(...notes.map((n) => n.step));
+    for (const n of notes) {
+      let idx = Math.max(0, Math.min(scene.scale.length - 1, n.scaleIdx));
+      // the opening note and long tones lean on chord tones so the theme
+      // follows the harmony instead of floating over it
+      if (n.step === firstStep || n.beats >= 1.5) idx = snapToChordTone(idx, chord);
       const swungT =
         t + n.step * sixteenth + (n.step % 2 === 1 ? sixteenth * scene.swing * 0.5 : 0);
       playMelodyNote(scene.scale[idx], swungT + 0.02 + h(), n.beats * beatLen, n.vel * velScale);
@@ -338,16 +400,25 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   }
 
   /** The melody instrument's statement for this chord, per band behavior. */
-  function scheduleMelody(t: number, sixteenth: number, energy: number) {
+  function scheduleMelody(t: number, sixteenth: number, energy: number, chord: Chord) {
     if (energy < 0.4) return;
     const beatLen = sixteenth * 4;
     const behavior = scene.band.melodyBehavior;
 
     if (behavior === "motif") {
-      // motif statement on chord 1, varied answer on chord 3
-      if (chordIdx === 0 && chance(0.8)) playMotif(t, sixteenth, 0, 1);
-      else if (chordIdx === 2 && chance(0.6)) {
-        playMotif(t, sixteenth, scene.answerShift, 0.8);
+      // theme and variations: the intro hints at a fragment, each grooving
+      // round restates the theme through the scene's variation cycle (with
+      // the shifted "answer" on chord 3), and the outro echoes the fragment
+      const outro = round === scene.rounds - 1;
+      if (round === 0) {
+        if (chordIdx === 2 && chance(0.6)) playMotif(t, sixteenth, "fragment", 0.7, chord);
+      } else if (chordIdx === 0 && chance(0.85)) {
+        const v = outro
+          ? "fragment"
+          : scene.variationOrder[(round - 1) % scene.variationOrder.length];
+        playMotif(t, sixteenth, v, outro ? 0.75 : 1, chord);
+      } else if (chordIdx === 2 && !outro && chance(0.6)) {
+        playMotif(t, sixteenth, "answer", 0.8, chord);
       }
     } else if (behavior === "arp" && chance(0.55)) {
       // a gentle run through the scale in bar two
@@ -422,7 +493,18 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
       );
     }
 
-    scheduleMelody(t, sixteenth, energy);
+    scheduleMelody(t, sixteenth, energy, chord);
+  }
+
+  /** MIDI note a riff degree resolves to against the current (and next) chord. */
+  function riffMidi(deg: RiffDeg, chord: Chord, next: Chord): number {
+    switch (deg) {
+      case "root": return chord.rootMidi;
+      case "third": return chord.rootMidi + chord.thirdIv;
+      case "fifth": return chord.rootMidi + 7;
+      case "octave": return chord.rootMidi + 12;
+      case "approach": return next.rootMidi + (chance(0.6) ? -1 : 2);
+    }
   }
 
   function scheduleStep(t: number) {
@@ -477,11 +559,21 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     const playBass = bassPlayers[scene.band.bassVoice];
     if (playBass) {
       const bVel = Math.min(1, 0.4 + 0.6 * energy);
-      const duckBass = (note: string, at: number, dur: number, vel: number) => {
+      const duckBass = (note: string, at: number, dur: number, vel: number, depth = 0.87) => {
         playBass(note, at, dur, vel);
-        mixDynamics.triggerDuck(at, 0.87, 0.12);
+        mixDynamics.triggerDuck(at, depth, 0.12);
       };
-      if (scene.bassStyle === "anchor") {
+      if (scene.bassStyle === "groove") {
+        // the scene's two-bar riff, repeated under every chord — quieter
+        // notes drop out when the groove is down, anchors always play
+        for (const rn of scene.bassRiff) {
+          if (rn.step !== step) continue;
+          if (rn.vel < 0.85 && energy < 0.5) continue;
+          if (rn.vel < 0.45 && energy < 0.85) continue;
+          const midi = riffMidi(rn.deg, chord, nextChord);
+          duckBass(noteFromMidi(midi), t + h(), beatLen * rn.beats, 0.3 * rn.vel * bVel, 0.92);
+        }
+      } else if (scene.bassStyle === "anchor") {
         if (step === 0) duckBass(chord.root, t + h(), beatLen * 1.8, 0.32 * bVel);
         if (step === 10 && chance(0.7)) duckBass(chord.root, t + h(), beatLen * 0.7, 0.22 * bVel);
         if (step === 16) duckBass(chord.root, t + h(), beatLen * 1.4, 0.3 * bVel);

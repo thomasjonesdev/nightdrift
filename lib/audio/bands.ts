@@ -14,10 +14,11 @@ export type ChordVoice =
 export type MelodyVoice =
   | "ep" | "fmep" | "pluck" | "guitar" | "vibe" | "bell"
   | "clarinet" | "horn" | "marimba" | "choir";
-export type BassVoice = "sine" | "pluck" | "none";
+export type BassVoice = "sine" | "pluck" | "bassGuitar" | "none";
 export type CompingStyle = "rolled" | "sustained" | "stabs" | "arp" | "broken";
 export type MelodyBehavior = "motif" | "arp" | "held" | "sparse";
-export type BassStyle = "anchor" | "walking" | "either";
+/** "groove" repeats the scene's two-bar bass riff — see makeBassRiff in scenes.ts. */
+export type BassStyle = "anchor" | "walking" | "groove" | "either";
 export type PulseVoice = "hat" | "shaker" | "brush";
 export type KitId = "boomBap" | "slowMotion" | "bossa" | "brushes" | "heartbeat";
 
@@ -126,7 +127,7 @@ const BANDS: Band[] = [
     id: "wurlitzer-trio",
     name: "wurlitzer trio",
     chordVoice: "fmep", comping: "stabs",
-    bassVoice: "sine", bassStyle: "walking",
+    bassVoice: "bassGuitar", bassStyle: "groove",
     melodyVoice: "fmep", melodyBehavior: "motif",
     kit: "boomBap", pulseVoice: "shaker",
     padChance: 0.25,
@@ -186,7 +187,7 @@ const BANDS: Band[] = [
     id: "bossa-balcony",
     name: "bossa balcony",
     chordVoice: "guitar", comping: "stabs",
-    bassVoice: "sine", bassStyle: "walking",
+    bassVoice: "bassGuitar", bassStyle: "groove",
     melodyVoice: "ep", melodyBehavior: "motif",
     kit: "bossa",
     padChance: 0.2,
@@ -241,6 +242,30 @@ const BANDS: Band[] = [
     tapeCutoff: [2400, 3200],
     reverb: { send: [0.28, 0.38], decay: [2.4, 3.4], damp: [2200, 3200] },
     weights: { mellow: 0.5, jazzy: 0.75, rainy: 0.4 },
+  },
+  {
+    id: "basement-session",
+    name: "basement session",
+    chordVoice: "ep", comping: "stabs",
+    bassVoice: "bassGuitar", bassStyle: "groove",
+    melodyVoice: "guitar", melodyBehavior: "motif",
+    kit: "boomBap",
+    padChance: 0.3,
+    tapeCutoff: [2600, 3600],
+    reverb: { send: [0.16, 0.26], decay: [1.4, 2.0], damp: [2800, 3800] },
+    weights: { mellow: 0.8, jazzy: 0.9, rainy: 0.4 },
+  },
+  {
+    id: "low-light-combo",
+    name: "low light combo",
+    chordVoice: "vibe", comping: "rolled",
+    bassVoice: "bassGuitar", bassStyle: "either",
+    melodyVoice: "fmep", melodyBehavior: "sparse",
+    kit: "slowMotion",
+    padChance: 0.35,
+    tapeCutoff: [2400, 3400],
+    reverb: { send: [0.24, 0.34], decay: [2.2, 3.0], damp: [2400, 3400] },
+    weights: { mellow: 0.5, jazzy: 0.6, rainy: 0.8 },
   },
   {
     id: "marimba-attic",

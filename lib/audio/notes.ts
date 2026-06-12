@@ -8,6 +8,10 @@ const NOTE_INDEX: Record<string, number> = {
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 /** Absolute semitone index (MIDI-style, C-1 = 0) for a note like "F#3". */
+export function midiFromNote(note: string): number {
+  return semis(note);
+}
+
 function semis(note: string): number {
   const m = note.match(/^([A-G][#b]?)(-?\d)$/);
   if (!m) throw new Error(`Invalid note: ${note}`);
