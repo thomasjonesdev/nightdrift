@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "nightdrift",
   description:
-    "Generative lofi for falling asleep — a swung boom-bap beat, Rhodes-style chords, and vinyl crackle that never repeats.",
+    "Programmatic lofi for falling asleep — a swung boom-bap beat, Rhodes-style chords, and vinyl crackle that never repeats.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,

@@ -31,7 +31,7 @@ export function updateMediaSession(scene: SceneSummary | null): void {
     artist: "nightdrift",
     album: scene
       ? `${scene.band} · ${scene.keyName} · ${scene.bpm} bpm`
-      : "generative lofi for sleep",
+      : "programmatic lofi for sleep",
   });
   navigator.mediaSession.playbackState = "playing";
 }

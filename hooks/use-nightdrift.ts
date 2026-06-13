@@ -37,6 +37,8 @@ export interface Nightdrift {
    * own rAF loop — a function (not state) so 60fps reads skip React renders.
    */
   getChannelLevels: () => ChannelLevels | null;
+  /** Kick-hit envelope (0–1) for the halo center pulse. */
+  getKickPulse: () => number;
   start: () => void;
   stop: () => void;
 }
@@ -130,6 +132,11 @@ export function useNightdrift(): Nightdrift {
 
   const getChannelLevels = useCallback(
     () => engine.current?.getChannelLevels() ?? null,
+    [],
+  );
+
+  const getKickPulse = useCallback(
+    () => engine.current?.getKickPulse() ?? 0,
     [],
   );
 
@@ -240,6 +247,7 @@ export function useNightdrift(): Nightdrift {
     scene,
     sceneProgress,
     getChannelLevels,
+    getKickPulse,
     start,
     stop,
   };

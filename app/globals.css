@@ -98,6 +98,65 @@ body {
 }
 
 @layer components {
+  /* frosted glass for bottom nav + popups — muted to match night palette */
+  .glass-bar {
+    background:
+      linear-gradient(
+        165deg,
+        rgba(141, 135, 160, 0.07) 0%,
+        rgba(111, 106, 132, 0.03) 42%,
+        rgba(6, 6, 16, 0.02) 100%
+      ),
+      rgba(6, 6, 16, 0.48);
+    backdrop-filter: blur(44px) saturate(135%);
+    -webkit-backdrop-filter: blur(44px) saturate(135%);
+    border: 1px solid rgba(141, 135, 160, 0.09);
+    box-shadow:
+      0 10px 40px rgba(0, 0, 0, 0.48),
+      inset 0 1px 0 rgba(141, 135, 160, 0.07),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+  }
+
+  .glass-panel {
+    background:
+      linear-gradient(
+        165deg,
+        rgba(141, 135, 160, 0.09) 0%,
+        rgba(111, 106, 132, 0.04) 45%,
+        rgba(6, 6, 16, 0.02) 100%
+      ),
+      rgba(6, 6, 16, 0.52);
+    backdrop-filter: blur(48px) saturate(140%);
+    -webkit-backdrop-filter: blur(48px) saturate(140%);
+    border: 1px solid rgba(141, 135, 160, 0.11);
+    box-shadow:
+      0 16px 56px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(141, 135, 160, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .glass-nav-btn {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transition: background 200ms ease, box-shadow 200ms ease;
+  }
+
+  .glass-nav-btn[data-active="true"] {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(141, 135, 160, 0.06) 0%,
+        rgba(6, 6, 16, 0.04) 100%
+      ),
+      rgba(214, 160, 96, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow:
+      inset 0 1px 0 rgba(141, 135, 160, 0.06),
+      0 0 14px rgba(214, 160, 96, 0.05);
+  }
+
   .volume-slider {
     appearance: none;
     height: 2px;

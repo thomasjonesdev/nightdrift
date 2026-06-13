@@ -15,6 +15,12 @@ import {
   type MelodyVoice,
 } from "./bands";
 import type { MoodKey } from "./moods";
+import {
+  assembleMelodyPlan,
+  type MelodyPlan,
+  type MotifNote,
+  type MotifVariation,
+} from "./melodies";
 import { noteFromMidi, pitchClassName } from "./notes";
 import { chance, pick, rand, randInt, weightedPick } from "./random";
 
@@ -230,61 +236,8 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
   },
 };
 
-// ---- melody motifs ----------------------------------------------------------
-
-export interface MotifNote {
-  /** Index into the scene's scale. */
-  scaleIdx: number;
-  /** 16th-note position within the chord's two bars (0–31). */
-  step: number;
-  /** Duration in beats. */
-  beats: number;
-  vel: number;
-}
-
-function makeMotif(scaleLen: number): MotifNote[] {
-  const count = randInt(4, 6);
-  const notes: MotifNote[] = [];
-  let step = randInt(1, 3) * 2;
-  const startIdx = randInt(2, scaleLen - 2);
-  let idx = startIdx;
-  for (let i = 0; i < count; i++) {
-    // the phrase relaxes back toward where it began, like a hummed tune resolving
-    if (i === count - 1) idx = startIdx + pick([-1, 0, 0, 1]);
-    notes.push({
-      scaleIdx: Math.max(0, Math.min(scaleLen - 1, idx)),
-      step,
-      beats: pick([0.75, 1, 1.5, 2]),
-      vel: rand(0.06, 0.1),
-    });
-    step += pick([2, 2, 3, 4, 6]);
-    if (step > 28) break;
-    idx += pick([-2, -1, -1, 1, 1, 2]); // mostly stepwise
-  }
-  return notes;
-}
-
-/**
- * Named transformations of the scene's motif. The engine states the plain
- * theme early, then cycles the scene's variation order through the middle
- * rounds, so the listener hears theme → variation → return instead of a
- * new random phrase each time.
- */
-export type MotifVariation =
-  | "plain"      // the theme as written
-  | "answer"     // the theme shifted by the scene's answerShift
-  | "lift"       // raised a couple of scale steps, slightly softer
-  | "displaced"  // pushed late by an eighth, leaning behind the beat
-  | "ornament"   // grace notes from below decorate the long tones
-  | "fragment";  // just the head of the phrase, an echo
-
-function makeVariationOrder(): MotifVariation[] {
-  const pool: MotifVariation[] = ["lift", "displaced", "ornament"];
-  const a = pick(pool);
-  let b = pick(pool);
-  while (b === a) b = pick(pool);
-  return ["plain", a, b];
-}
+// Re-export melody types used by the engine and UI.
+export type { MelodyPlan, MotifNote, MotifVariation } from "./melodies";
 
 // ---- bass riff ---------------------------------------------------------------
 
@@ -353,11 +306,10 @@ export interface Scene {
   progression: Chord[];
   /** Melody pool, low to high, e.g. ["E4", "G4", ...]. */
   scale: string[];
+  /** Stored phrases + song structure for human-feeling melody playback. */
+  melodyPlan: MelodyPlan;
+  /** Primary hook — anchor for fills and ambient echoes. */
   motif: MotifNote[];
-  /** Scale-step shift applied when the motif is "answered" later in a round. */
-  answerShift: number;
-  /** Variations cycled through the grooving middle rounds, in order. */
-  variationOrder: MotifVariation[];
   /** Full 8-bar passes through the progression before the next segue. */
   rounds: number;
   // performance
@@ -515,6 +467,7 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
 
   const scale = buildScale(keyPc, cfg.scaleOffsets);
   const band = assembleBand(family, prev?.band.id);
+  const melodyPlan = assembleMelodyPlan(family, scale.length, prev?.melodyPlan);
 
   // voicing character leans toward the band's comping: sustained voices love
   // open spreads, stabs sit best on shells, everything else favors the clusters
@@ -534,9 +487,8 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
     progressionIdx,
     progression: buildProgression(keyPc, cfg.progressions[progressionIdx], voicingStyle),
     scale,
-    motif: makeMotif(scale.length),
-    answerShift: pick([-2, -1, 1, 1, 2]),
-    variationOrder: makeVariationOrder(),
+    melodyPlan,
+    motif: melodyPlan.phrases.A,
     rounds: randInt(3, 5),
     band,
     voicingStyle,

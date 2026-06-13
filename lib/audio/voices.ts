@@ -103,7 +103,7 @@ export function createVoices(buses: Buses) {
     g.gain.linearRampToValueAtTime(0.0001, time + dur);
     g.connect(tape);
     for (const note of notes) {
-      for (const detune of [-4, 4]) {
+      for (const detune of [-6, -2, 2, 6]) {
         const o = ctx.createOscillator();
         o.type = "triangle";
         o.frequency.value = freq(note);
@@ -209,7 +209,7 @@ export function createVoices(buses: Buses) {
     wobbleAmt.connect(car.detune);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, time);
-    g.gain.exponentialRampToValueAtTime(vel, time + 0.012);
+    g.gain.exponentialRampToValueAtTime(vel * 0.72, time + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
     car.connect(g).connect(tape);
     car.start(time); mod.start(time);
@@ -258,11 +258,11 @@ export function createVoices(buses: Buses) {
     lp.frequency.linearRampToValueAtTime(800, time + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, time);
-    g.gain.linearRampToValueAtTime(vel, time + dur * 0.3);
-    g.gain.setValueAtTime(vel, time + dur * 0.75);
+    g.gain.linearRampToValueAtTime(vel * 0.72, time + dur * 0.3);
+    g.gain.setValueAtTime(vel * 0.72, time + dur * 0.75);
     g.gain.linearRampToValueAtTime(0.0001, time + dur);
     lp.connect(g).connect(tape);
-    for (const detune of [-5, 5]) {
+    for (const detune of [-8, -4, 4, 8]) {
       const o = ctx.createOscillator();
       o.type = "sawtooth";
       o.frequency.value = freq(note);
@@ -347,7 +347,10 @@ export function createVoices(buses: Buses) {
     lp.connect(g);
     g.connect(tape);
     g.connect(revSend).connect(reverb);
-    for (const [ratio, detune] of [[1, -6], [1.004, 0], [0.996, 6], [2.01, -3]] as const) {
+    for (const [ratio, detune] of [
+      [1, -8], [1.002, -4], [1.004, 0], [0.998, 4],
+      [2.01, -6], [2.005, -2], [2.008, 2], [0.996, 8],
+    ] as const) {
       const o = ctx.createOscillator();
       o.type = "sine";
       o.frequency.value = freq(note) * ratio;
@@ -358,28 +361,40 @@ export function createVoices(buses: Buses) {
     }
   }
 
-  /** Muted horn: dark saw swell, like a flugelhorn in the next room. */
+  /** Muted horn: soft triangle swell through heavy lowpass — distant, not brassy. */
   function playHorn(note: string, time: number, dur: number, vel: number) {
-    const o = ctx.createOscillator();
-    o.type = "sawtooth";
-    o.frequency.value = freq(note);
-    wobbleAmt.connect(o.detune);
+    const f = freq(note);
+    const body = ctx.createOscillator();
+    body.type = "triangle";
+    body.frequency.value = f;
+    const warmth = ctx.createOscillator();
+    warmth.type = "sine";
+    warmth.frequency.value = f * 0.5;
+    wobbleAmt.connect(body.detune);
+    wobbleAmt.connect(warmth.detune);
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.frequency.setValueAtTime(520, time);
-    lp.frequency.linearRampToValueAtTime(880, time + dur * 0.2);
-    lp.frequency.linearRampToValueAtTime(600, time + dur);
+    lp.frequency.setValueAtTime(380, time);
+    lp.frequency.linearRampToValueAtTime(580, time + dur * 0.25);
+    lp.frequency.linearRampToValueAtTime(440, time + dur);
+    const warmthG = ctx.createGain();
+    warmthG.gain.value = 0.3;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, time);
-    g.gain.linearRampToValueAtTime(vel * 0.78, time + 0.12);
-    g.gain.setValueAtTime(vel * 0.78, time + dur * 0.65);
+    g.gain.linearRampToValueAtTime(vel * 0.48, time + 0.22);
+    g.gain.setValueAtTime(vel * 0.48, time + dur * 0.6);
     g.gain.linearRampToValueAtTime(0.0001, time + dur);
     const revSend = ctx.createGain();
-    revSend.gain.value = 0.3;
-    o.connect(lp).connect(g);
-    g.connect(tape);
+    revSend.gain.value = 0.6;
+    const drySend = ctx.createGain();
+    drySend.gain.value = 0.4;
+    body.connect(lp);
+    warmth.connect(warmthG).connect(lp);
+    lp.connect(g);
+    g.connect(drySend).connect(tape);
     g.connect(revSend).connect(reverb);
-    o.start(time); o.stop(time + dur + 0.1);
+    body.start(time); warmth.start(time);
+    body.stop(time + dur + 0.1); warmth.stop(time + dur + 0.1);
   }
 
   /** Vibraphone: sine plus a fast-dying 4th partial, shimmering tremolo. */
@@ -709,24 +724,276 @@ export function createVoices(buses: Buses) {
   function playTrainHorn(time: number) {
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.frequency.value = 600;
+    lp.frequency.value = 320;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, time);
-    g.gain.linearRampToValueAtTime(0.012, time + 1.2);
-    g.gain.setValueAtTime(0.012, time + 2);
-    g.gain.exponentialRampToValueAtTime(0.0001, time + 4);
+    g.gain.linearRampToValueAtTime(0.004, time + 2);
+    g.gain.setValueAtTime(0.004, time + 2.5);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 5);
     lp.connect(g);
     g.connect(master);
     g.connect(reverb);
-    for (const f of [233, 277]) { // a moody minor third
+    for (const f of [220, 262]) {
       const o = ctx.createOscillator();
-      o.type = "sawtooth";
+      o.type = "sine";
       o.frequency.value = f;
       o.detune.setValueAtTime(0, time);
-      o.detune.linearRampToValueAtTime(-30, time + 4); // drifting away
+      o.detune.linearRampToValueAtTime(-20, time + 5);
       o.connect(lp);
-      o.start(time); o.stop(time + 4.2);
+      o.start(time); o.stop(time + 5.2);
     }
+  }
+
+  /** Wurlitzer: warm triangle body with a bright sine bite. */
+  function playWurli(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const body = ctx.createOscillator();
+    body.type = "triangle";
+    body.frequency.value = f;
+    const bite = ctx.createOscillator();
+    bite.type = "sine";
+    bite.frequency.value = f * 2;
+    wobbleAmt.connect(body.detune);
+    wobbleAmt.connect(bite.detune);
+    const biteG = ctx.createGain();
+    biteG.gain.setValueAtTime(vel * 0.28, time);
+    biteG.gain.exponentialRampToValueAtTime(0.0001, time + dur * 0.35);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(vel, time + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    body.connect(g);
+    bite.connect(biteG).connect(g);
+    g.connect(tape);
+    body.start(time); bite.start(time);
+    body.stop(time + dur + 0.1); bite.stop(time + dur + 0.1);
+  }
+
+  /** Clavinet: bright, percussive square-ish pluck. */
+  function playClav(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const o = ctx.createOscillator();
+    o.type = "square";
+    o.frequency.value = f;
+    wobbleAmt.connect(o.detune);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(3200, time);
+    lp.frequency.exponentialRampToValueAtTime(900, time + Math.min(dur, 0.5));
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(vel * 0.85, time + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + Math.min(dur, 0.55));
+    o.connect(lp).connect(g).connect(tape);
+    o.start(time); o.stop(time + dur + 0.1);
+  }
+
+  /** Breath flute: soft sine with air and gentle vibrato. */
+  function playFlute(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.value = f;
+    wobbleAmt.connect(o.detune);
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 5.2;
+    const vibAmt = ctx.createGain();
+    vibAmt.gain.value = 4;
+    vib.connect(vibAmt).connect(o.detune);
+    const breath = ctx.createBufferSource();
+    breath.buffer = noiseBuf;
+    const breathBp = ctx.createBiquadFilter();
+    breathBp.type = "bandpass";
+    breathBp.frequency.value = 2400;
+    breathBp.Q.value = 0.4;
+    const breathG = ctx.createGain();
+    breathG.gain.setValueAtTime(vel * 0.1, time);
+    breathG.gain.exponentialRampToValueAtTime(0.0001, time + dur * 0.8);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vel * 0.7, time + 0.08);
+    g.gain.setValueAtTime(vel * 0.7, time + dur * 0.65);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur);
+    o.connect(g);
+    breath.connect(breathBp).connect(breathG).connect(g);
+    g.connect(tape);
+    o.start(time); vib.start(time); breath.start(time);
+    o.stop(time + dur + 0.1); vib.stop(time + dur + 0.1); breath.stop(time + dur + 0.1);
+  }
+
+  /** Harp: bright Karplus-Strong with a long tail. */
+  function playHarp(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const src = ctx.createBufferSource();
+    src.buffer = ksBuffer(f, 2.8, 0.45, 0.995);
+    wobbleAmt.connect(src.detune);
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = Math.min(f * 4, 5000);
+    bp.Q.value = 0.5;
+    const end = time + Math.min(dur, 2.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(vel * 0.88, time + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    src.connect(bp).connect(g).connect(tape);
+    src.start(time); src.stop(end + 0.1);
+  }
+
+  /** Felt piano: muted Karplus-Strong, intimate and close. */
+  function playPiano(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const src = ctx.createBufferSource();
+    src.buffer = ksBuffer(f, 2.5, 0.82, 0.997);
+    wobbleAmt.connect(src.detune);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 2200;
+    const end = time + Math.min(dur, 2.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(vel * 0.75, time + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    src.connect(lp).connect(g).connect(tape);
+    src.start(time); src.stop(end + 0.1);
+  }
+
+  /** Accordion: reedy saw with a slow bellows swell and tremolo. */
+  function playAccordion(note: string, time: number, dur: number, vel: number) {
+    const o = ctx.createOscillator();
+    o.type = "sawtooth";
+    o.frequency.value = freq(note);
+    wobbleAmt.connect(o.detune);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(680, time);
+    lp.frequency.linearRampToValueAtTime(1100, time + dur * 0.3);
+    lp.frequency.linearRampToValueAtTime(750, time + dur);
+    const trem = ctx.createOscillator();
+    trem.frequency.value = 5.5;
+    const tremAmt = ctx.createGain();
+    tremAmt.gain.value = vel * 0.22;
+    trem.connect(tremAmt).connect(o.detune);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vel * 0.65, time + 0.18);
+    g.gain.setValueAtTime(vel * 0.65, time + dur * 0.72);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur);
+    o.connect(lp).connect(g).connect(tape);
+    o.start(time); trem.start(time);
+    o.stop(time + dur + 0.1); trem.stop(time + dur + 0.1);
+  }
+
+  /** Cello: bowed saw with a slow attack and warm lowpass. */
+  function playCello(note: string, time: number, dur: number, vel: number) {
+    const o = ctx.createOscillator();
+    o.type = "sawtooth";
+    o.frequency.value = freq(note);
+    wobbleAmt.connect(o.detune);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(480, time);
+    lp.frequency.linearRampToValueAtTime(820, time + dur * 0.25);
+    lp.frequency.linearRampToValueAtTime(520, time + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vel * 0.72, time + 0.14);
+    g.gain.setValueAtTime(vel * 0.72, time + dur * 0.68);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur);
+    const revSend = ctx.createGain();
+    revSend.gain.value = 0.25;
+    o.connect(lp).connect(g);
+    g.connect(tape);
+    g.connect(revSend).connect(reverb);
+    o.start(time); o.stop(time + dur + 0.1);
+  }
+
+  /** Celeste: glassy high partials with a long shimmer. */
+  function playCeleste(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note) * 2;
+    const o1 = ctx.createOscillator();
+    o1.type = "sine";
+    o1.frequency.value = f;
+    const o2 = ctx.createOscillator();
+    o2.type = "sine";
+    o2.frequency.value = f * 3.01;
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(vel * 0.18, time);
+    g2.gain.exponentialRampToValueAtTime(0.0001, time + 0.8);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vel * 0.85, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + Math.min(dur, 2.8));
+    o1.connect(g);
+    o2.connect(g2).connect(g);
+    g.connect(tape);
+    g.connect(reverb);
+    o1.start(time); o2.start(time);
+    o1.stop(time + dur + 0.1); o2.stop(time + 0.9);
+  }
+
+  /** Soft synth lead: detuned saw pair, gently filtered. */
+  function playSynth(note: string, time: number, dur: number, vel: number) {
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(1600, time);
+    lp.frequency.linearRampToValueAtTime(2200, time + dur * 0.2);
+    lp.frequency.linearRampToValueAtTime(1200, time + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vel * 0.4, time + 0.06);
+    g.gain.setValueAtTime(vel * 0.4, time + dur * 0.7);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur);
+    lp.connect(g).connect(tape);
+    for (const detune of [-7, 7]) {
+      const o = ctx.createOscillator();
+      o.type = "sawtooth";
+      o.frequency.value = freq(note);
+      o.detune.value = detune;
+      wobbleAmt.connect(o.detune);
+      o.connect(lp);
+      o.start(time); o.stop(time + dur + 0.1);
+    }
+  }
+
+  /** Oboe: soft reed tone with breath — rounded, not piercing. */
+  function playOboe(note: string, time: number, dur: number, vel: number) {
+    const f = freq(note);
+    const o = ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.value = f;
+    wobbleAmt.connect(o.detune);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(900, time);
+    lp.frequency.linearRampToValueAtTime(1200, time + dur * 0.2);
+    lp.frequency.linearRampToValueAtTime(800, time + dur);
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 5.2;
+    const vibAmt = ctx.createGain();
+    vibAmt.gain.value = 3.5;
+    vib.connect(vibAmt).connect(o.detune);
+    const breath = ctx.createBufferSource();
+    breath.buffer = noiseBuf;
+    const breathBp = ctx.createBiquadFilter();
+    breathBp.type = "bandpass";
+    breathBp.frequency.value = 1400;
+    breathBp.Q.value = 0.4;
+    const breathG = ctx.createGain();
+    breathG.gain.setValueAtTime(vel * 0.05, time);
+    breathG.gain.exponentialRampToValueAtTime(0.0001, time + dur * 0.75);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vel * 0.48, time + 0.14);
+    g.gain.setValueAtTime(vel * 0.48, time + dur * 0.65);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur);
+    const revSend = ctx.createGain();
+    revSend.gain.value = 0.35;
+    o.connect(lp).connect(g);
+    breath.connect(breathBp).connect(breathG).connect(g);
+    g.connect(tape);
+    g.connect(revSend).connect(reverb);
+    o.start(time); vib.start(time); breath.start(time);
+    o.stop(time + dur + 0.1); vib.stop(time + dur + 0.1); breath.stop(time + dur + 0.1);
   }
 
   /** Needle-drop thump + crackle burst for the "vinyl flip" between scenes. */
@@ -749,6 +1016,8 @@ export function createVoices(buses: Buses) {
     playKey, playPluck, playBell, playPad, playBass, playBassGuitar, playUndertone,
     playGuitar, playPluckBass, playFmKey, playOrgan, playStrings, playVibe,
     playMarimba, playClarinet, playChoir, playHorn,
+    playWurli, playClav, playFlute, playHarp, playPiano, playAccordion,
+    playCello, playCeleste, playSynth, playOboe,
     playKick, playSnare, playHat, playShaker, playRim, playBrush,
     playPop, playThunder, playCrickets, playNeedleDrop,
     playOwl, playChimes, playTrainHorn,

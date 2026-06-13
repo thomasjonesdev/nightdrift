@@ -1,45 +1,46 @@
 "use client";
 
-// The halo: play/stop button, scene progress ring, and — while the band
-// plays — one concentric ring per active channel. Rings fade in when an
-// instrument joins the lineup, fade out when it leaves, and glow gently
-// brighter and dimmer with that channel's live level.
+// The halo: scene progress ring, and — while the band plays — one concentric
+// ring per active channel. Rings fade in when an instrument joins the lineup,
+// fade out when it leaves, slide to new radii when the lineup changes, and
+// glow gently with that channel's live level. Play/stop lives in the bottom nav.
 
 import { useEffect, useRef } from "react";
 import type { ChannelId, ChannelLevels } from "@/lib/audio/engine";
 import type { SceneLineup } from "@/lib/audio/scenes";
+import {
+  HALO_R as R,
+  HALO_SIZE as SIZE,
+  HALO_STROKE as STROKE,
+  ringRadius,
+} from "./halo-rings";
 
 interface HaloButtonProps {
   playing: boolean;
   progress: number;
   lineup: SceneLineup | null;
   getLevels: () => ChannelLevels | null;
+  getKickPulse: () => number;
   /** Sleep-timer fraction left (1→0, null when no timer runs) — drawn as a ring. */
   timerProgress: number | null;
-  onClick: () => void;
 }
 
-const SIZE = 290;
-const VIEW_PAD = 10; // room for the progress playhead and its glow outside the ring
-const STROKE = 1.5;
-const R = (SIZE - STROKE) / 2;
+const VIEW_PAD = 10;
 const CX = SIZE / 2;
 const CY = SIZE / 2;
 const CIRC = 2 * Math.PI * R;
 
-// outermost first: the weather outside the song, then the band, inward
-const RINGS: { id: ChannelId; color: string }[] = [
-  { id: "ambience", color: "#b9b2d8" }, // starlight
-  { id: "chords", color: "#deaa68" },   // glow
-  { id: "melody", color: "#efe6d2" },   // cream
-  { id: "bass", color: "#b07a86" },     // dusk rose, warmed
-  { id: "drums", color: "#a59fb4" },    // lavender
-];
-const RING_GAP = 9;
-const RING_START = 14; // inset of the first instrument ring from the halo edge
+/** Outermost → innermost — matches how the band reads visually. */
+const CHANNEL_ORDER: ChannelId[] = ["ambience", "chords", "melody", "bass", "drums"];
 
-// sleep timer: a ring between the progress ring and the band — same sweep as
-// the scene ring, but unwinding counter-clockwise as time runs out
+const RING_META: Record<ChannelId, { color: string }> = {
+  ambience: { color: "#b9b2d8" },
+  chords: { color: "#deaa68" },
+  melody: { color: "#efe6d2" },
+  bass: { color: "#b07a86" },
+  drums: { color: "#a59fb4" },
+};
+
 const TIMER_R = R - 7;
 const TIMER_CIRC = 2 * Math.PI * TIMER_R;
 
@@ -49,9 +50,32 @@ function inLineup(id: ChannelId, lineup: SceneLineup): boolean {
   return true;
 }
 
+function activeChannels(lineup: SceneLineup): ChannelId[] {
+  return CHANNEL_ORDER.filter((id) => inLineup(id, lineup));
+}
+
 function playheadAt(p: number, r = R) {
   const angle = p * 2 * Math.PI - Math.PI / 2;
   return { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) };
+}
+
+function kickPulseAt(intensity: number) {
+  const t = Math.min(1, intensity);
+  return {
+    scale: 0.84 + t * 0.28,
+    opacity: 0.68 + t * 0.32,
+    glow: 6 + t * 18,
+  };
+}
+
+function initRingState(): Record<ChannelId, { presence: number; glow: number; radius: number }> {
+  return {
+    ambience: { presence: 0, glow: 0, radius: ringRadius(0) },
+    chords: { presence: 0, glow: 0, radius: ringRadius(1) },
+    melody: { presence: 0, glow: 0, radius: ringRadius(2) },
+    bass: { presence: 0, glow: 0, radius: ringRadius(3) },
+    drums: { presence: 0, glow: 0, radius: ringRadius(4) },
+  };
 }
 
 export default function HaloButton({
@@ -59,32 +83,40 @@ export default function HaloButton({
   progress,
   lineup,
   getLevels,
+  getKickPulse,
   timerProgress,
-  onClick,
 }: HaloButtonProps) {
   const elapsed = CIRC * progress;
   const head = playheadAt(progress);
 
   const ringEls = useRef(new Map<ChannelId, SVGCircleElement>());
+  const breatheEl = useRef<HTMLSpanElement>(null);
   const timerArcEl = useRef<SVGCircleElement>(null);
   const timerDotEl = useRef<SVGCircleElement>(null);
   const timerPresence = useRef(0);
   const timerProgressRef = useRef(timerProgress);
   const lastTimerProgress = useRef(1);
-  const ringState = useRef<Record<ChannelId, { presence: number; glow: number }>>({
-    chords: { presence: 0, glow: 0 },
-    melody: { presence: 0, glow: 0 },
-    bass: { presence: 0, glow: 0 },
-    drums: { presence: 0, glow: 0 },
-    ambience: { presence: 0, glow: 0 },
-  });
+  const ringState = useRef(initRingState());
   const lineupRef = useRef(lineup);
   const playingRef = useRef(playing);
+  const kickGlow = useRef(0);
+  const reducedMotion = useRef(false);
+  const getLevelsRef = useRef(getLevels);
+  const getKickPulseRef = useRef(getKickPulse);
+
+  useEffect(() => {
+    reducedMotion.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }, []);
 
   useEffect(() => {
     lineupRef.current = lineup;
     playingRef.current = playing;
   }, [lineup, playing]);
+
+  useEffect(() => {
+    getLevelsRef.current = getLevels;
+    getKickPulseRef.current = getKickPulse;
+  }, [getLevels, getKickPulse]);
 
   useEffect(() => {
     timerProgressRef.current = timerProgress;
@@ -110,29 +142,57 @@ export default function HaloButton({
         dot.style.opacity = o;
       }
 
-      const levels = getLevels();
-      for (const [id, el] of ringEls.current) {
+      const levels = getLevelsRef.current();
+      const active = lineupRef.current ? activeChannels(lineupRef.current) : [];
+
+      for (const id of CHANNEL_ORDER) {
+        const el = ringEls.current.get(id);
+        if (!el) continue;
+
         const s = ringState.current[id];
-        const here =
-          playingRef.current && lineupRef.current && inLineup(id, lineupRef.current) ? 1 : 0;
-        // slow walk-on/walk-off as the lineup changes (~1s)
-        s.presence += (here - s.presence) * 0.018;
-        // gentle glow that swells and settles with the channel's level
-        const target = levels?.[id] ?? 0;
+        const slot = active.indexOf(id);
+        const inBand = playingRef.current && slot >= 0;
+        const targetPresence = inBand ? 1 : 0;
+        const targetRadius = slot >= 0 ? ringRadius(slot) : s.radius;
+
+        s.presence += (targetPresence - s.presence) * 0.018;
+        s.radius += (targetRadius - s.radius) * (inBand ? 0.07 : 0.045);
+
+        const target = inBand ? (levels?.[id] ?? 0) : 0;
         s.glow += (target - s.glow) * (target > s.glow ? 0.055 : 0.028);
+
+        el.setAttribute("r", s.radius.toFixed(2));
         el.style.opacity = (s.presence * (0.07 + s.glow * 0.55)).toFixed(3);
       }
+
+      const breathe = breatheEl.current;
+      if (breathe) {
+        if (playingRef.current && !reducedMotion.current) {
+          const target = getKickPulseRef.current();
+          kickGlow.current +=
+            (target - kickGlow.current) * (target > kickGlow.current ? 0.72 : 0.16);
+          const { scale, opacity, glow } = kickPulseAt(kickGlow.current);
+          breathe.style.transform = `scale(${scale.toFixed(4)})`;
+          breathe.style.opacity = opacity.toFixed(3);
+          breathe.style.boxShadow = `0 0 ${glow.toFixed(1)}px rgba(222, 170, 104, ${(0.12 + kickGlow.current * 0.45).toFixed(3)})`;
+        } else {
+          kickGlow.current = 0;
+          breathe.style.transform = "";
+          breathe.style.opacity = "";
+          breathe.style.boxShadow = "";
+        }
+      }
+
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [getLevels]);
+  }, []);
 
   return (
-    <button
-      onClick={onClick}
-      aria-label={playing ? "Stop the beat" : "Start the beat"}
-      className={`relative flex size-[290px] cursor-pointer items-center justify-center overflow-visible rounded-full border bg-[radial-gradient(circle_at_50%_45%,rgba(214,160,96,0.10),transparent_70%)] transition-colors duration-[1200ms] focus-visible:outline-2 focus-visible:outline-offset-[6px] focus-visible:outline-ember ${
+    <div
+      aria-hidden
+      className={`relative flex size-[290px] items-center justify-center overflow-visible rounded-full border bg-[radial-gradient(circle_at_50%_45%,rgba(214,160,96,0.10),transparent_70%)] transition-colors duration-[1200ms] ${
         playing ? "border-transparent" : "border-parchment/20"
       }`}
     >
@@ -157,7 +217,7 @@ export default function HaloButton({
           strokeWidth={STROKE}
           className={playing ? "text-parchment/15" : "text-parchment/20"}
         />
-        {RINGS.map(({ id, color }, i) => (
+        {CHANNEL_ORDER.map((id) => (
           <circle
             key={id}
             ref={(el) => {
@@ -166,11 +226,11 @@ export default function HaloButton({
             }}
             cx={CX}
             cy={CY}
-            r={R - RING_START - i * RING_GAP}
+            r={ringRadius(CHANNEL_ORDER.indexOf(id))}
             fill="none"
-            stroke={color}
+            stroke={RING_META[id].color}
             strokeWidth={1.25}
-            style={{ opacity: 0, filter: `drop-shadow(0 0 5px ${color})` }}
+            style={{ opacity: 0, filter: `drop-shadow(0 0 5px ${RING_META[id].color})` }}
           />
         ))}
         <circle
@@ -222,24 +282,11 @@ export default function HaloButton({
       </svg>
 
       <span
-        className={`absolute inset-[28%] rounded-full bg-[radial-gradient(circle_at_50%_40%,rgba(222,170,104,0.32),rgba(146,96,120,0.10)_60%,transparent_75%)] blur-[2px] transition-transform duration-[2000ms] ${
-          playing ? "animate-breathe motion-reduce:animate-none" : "scale-[0.92]"
+        ref={breatheEl}
+        className={`absolute inset-[28%] rounded-full bg-[radial-gradient(circle_at_50%_40%,rgba(222,170,104,0.32),rgba(146,96,120,0.10)_60%,transparent_75%)] blur-[2px] will-change-transform motion-reduce:scale-[0.92] ${
+          playing ? "" : "scale-[0.92] transition-transform duration-[2000ms]"
         }`}
       />
-      <span
-        className={`relative z-10 font-mono text-[13px] lowercase ${
-          playing
-            ? "text-ember/75 animate-breathe motion-reduce:animate-none"
-            : "text-ember/60 transition-opacity duration-[1200ms]"
-        }`}
-        style={{
-          filter: playing
-            ? "drop-shadow(0 0 10px rgba(214, 160, 96, 0.22))"
-            : "drop-shadow(0 0 12px rgba(214, 160, 96, 0.15))",
-        }}
-      >
-        {playing ? "stop" : "begin"}
-      </span>
-    </button>
+    </div>
   );
 }

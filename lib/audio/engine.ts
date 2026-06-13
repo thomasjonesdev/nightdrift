@@ -28,6 +28,7 @@ import {
   type PulseVoice,
 } from "./bands";
 import type { MoodKey } from "./moods";
+import { varyPhrase } from "./melodies";
 import { dbToGain, midiFromNote, noteFromMidi } from "./notes";
 import { chance, pick, randInt } from "./random";
 import {
@@ -40,6 +41,7 @@ import {
   type Scene,
   type SceneSummary,
 } from "./scenes";
+import { createStereoSpread } from "./stereo";
 import { createVoices } from "./voices";
 
 export const STEPS = 32;             // two bars of 16ths = one chord
@@ -78,6 +80,8 @@ export interface NightdriftEngine {
   connectDirectOutput(): void;
   /** Elapsed fraction of the current scene (0–1), for UI progress rings. */
   getSceneProgress(): number;
+  /** Kick-hit envelope (0–1) for the halo center pulse. */
+  getKickPulse(): number;
   /** Live per-channel levels, for the animated band on the home screen. */
   getChannelLevels(): ChannelLevels;
   dispose(): void;
@@ -100,7 +104,9 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   master.connect(playbackStream);
 
   const mixDynamics = createMixDynamics(ctx);
-  mixDynamics.mix.connect(master);
+  const melodicSpread = createStereoSpread(ctx, 0.24);
+  mixDynamics.mix.connect(melodicSpread.input);
+  melodicSpread.output.connect(master);
 
   const sceneReverb = createSceneReverb(ctx, mixDynamics.mix);
 
@@ -114,8 +120,10 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   // drums get their own bus so segues and dropouts can fade them smoothly
   const drums = ctx.createGain();
   drums.gain.value = 1;
+  const drumSpread = createStereoSpread(ctx, 0.14);
   const drumOut = createDrumDynamics(ctx, master);
-  drums.connect(drumOut);
+  drums.connect(drumSpread.input);
+  drumSpread.output.connect(drumOut);
 
   // sub-bass undertone — quiet enough for the main mix to breathe around
   const undertone = ctx.createGain();
@@ -151,7 +159,9 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
 
   // the weather outside the song (rain, wind, city, fire — see ambience.ts)
   const ambienceBus = ctx.createGain();
-  ambienceBus.connect(master);
+  const ambienceSpread = createStereoSpread(ctx, 0.3);
+  ambienceBus.connect(ambienceSpread.input);
+  ambienceSpread.output.connect(master);
   const ambience = createAmbience(ctx, ambienceBus, noiseBuf);
 
   // each band role gets its own bus into the tape so the UI can meter who
@@ -159,9 +169,15 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   const chordBus = ctx.createGain();
   const melodyBus = ctx.createGain();
   const bassBus = ctx.createGain();
-  chordBus.connect(tape);
-  melodyBus.connect(tape);
-  bassBus.connect(tape);
+  const chordPan = ctx.createStereoPanner();
+  chordPan.pan.value = -0.13;
+  const melodyPan = ctx.createStereoPanner();
+  melodyPan.pan.value = 0.17;
+  const bassPan = ctx.createStereoPanner();
+  bassPan.pan.value = -0.04;
+  chordBus.connect(chordPan).connect(tape);
+  melodyBus.connect(melodyPan).connect(tape);
+  bassBus.connect(bassPan).connect(tape);
 
   const sharedBuses = {
     ctx, drums, undertone, master, reverb: sceneReverb.input, pops, noiseBuf, wobbleAmt,
@@ -195,6 +211,34 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   // ---- voice dispatch ----
   type NotePlayer = (note: string, t: number, dur: number, vel: number) => void;
 
+  /** Synthetic / pad timbres sit lower so drums and bass keep the pocket. */
+  const SYNTHY_CHORD_GAIN: Partial<Record<ChordVoice, number>> = {
+    synth: 0.5,
+    fmep: 0.68,
+    strings: 0.62,
+    organ: 0.7,
+    choir: 0.65,
+    wurli: 0.75,
+    clav: 0.7,
+    celeste: 0.6,
+  };
+  const SYNTHY_MELODY_GAIN: Partial<Record<MelodyVoice, number>> = {
+    synth: 0.48,
+    fmep: 0.7,
+    strings: 0.65,
+    organ: 0.72,
+    choir: 0.68,
+    wurli: 0.78,
+    clav: 0.72,
+    celeste: 0.62,
+  };
+
+  function chordVelScale(voice: ChordVoice = scene.band.chordVoice): number {
+    let s = SYNTHY_CHORD_GAIN[voice] ?? 1;
+    if (voice === "horn") s *= 0.55;
+    return s;
+  }
+
   const chordPlayers: Record<ChordVoice, NotePlayer> = {
     ep: chordVoices.playKey,
     fmep: chordVoices.playFmKey,
@@ -205,7 +249,17 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     pluck: chordVoices.playPluck,
     marimba: chordVoices.playMarimba,
     choir: chordVoices.playChoir,
-    horn: chordVoices.playHorn,
+    horn: (note, t, dur, vel) => chordVoices.playHorn(note, t, dur, vel * 0.7),
+    wurli: chordVoices.playWurli,
+    clav: chordVoices.playClav,
+    harp: chordVoices.playHarp,
+    piano: chordVoices.playPiano,
+    accordion: chordVoices.playAccordion,
+    cello: chordVoices.playCello,
+    flute: chordVoices.playFlute,
+    celeste: chordVoices.playCeleste,
+    synth: chordVoices.playSynth,
+    oboe: chordVoices.playOboe,
   };
 
   const melodyPlayers: Record<MelodyVoice, NotePlayer> = {
@@ -216,9 +270,20 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     vibe: melodyVoices.playVibe,
     bell: (note, t, _dur, vel) => melodyVoices.playBell(note, t, vel * 0.7),
     clarinet: melodyVoices.playClarinet,
-    horn: melodyVoices.playHorn,
+    horn: (note, t, dur, vel) => melodyVoices.playHorn(note, t, dur, vel * 0.7),
     marimba: melodyVoices.playMarimba,
     choir: melodyVoices.playChoir,
+    organ: melodyVoices.playOrgan,
+    strings: melodyVoices.playStrings,
+    wurli: melodyVoices.playWurli,
+    clav: melodyVoices.playClav,
+    harp: melodyVoices.playHarp,
+    piano: melodyVoices.playPiano,
+    cello: melodyVoices.playCello,
+    flute: melodyVoices.playFlute,
+    celeste: melodyVoices.playCeleste,
+    synth: melodyVoices.playSynth,
+    oboe: (note, t, dur, vel) => melodyVoices.playOboe(note, t, dur, vel * 0.75),
   };
 
   const bassPlayers: Record<BassVoice, NotePlayer | null> = {
@@ -263,7 +328,29 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   let lookaheadSecs = document.hidden ? LOOKAHEAD_HIDDEN_SECS : LOOKAHEAD_VISIBLE_SECS;
   let directOutput = false;
   let sceneStartedAt = 0;
+  const kickHits: { time: number; strength: number }[] = [];
   const h = () => (Math.random() - 0.5) * 0.012; // humanize
+
+  function triggerKickPulse(time: number, strength: number) {
+    kickHits.push({ time, strength: Math.min(1, strength * 1.6) });
+  }
+
+  function getKickPulse(): number {
+    const now = ctx.currentTime;
+    let pulse = 0;
+    let write = 0;
+    for (let i = 0; i < kickHits.length; i++) {
+      const hit = kickHits[i];
+      const age = now - hit.time;
+      if (age > 0.45) continue;
+      if (age >= 0) {
+        pulse = Math.max(pulse, hit.strength * Math.exp(-age / 0.08));
+      }
+      kickHits[write++] = hit;
+    }
+    kickHits.length = write;
+    return Math.min(1, pulse);
+  }
 
   function onVisibilityChange() {
     if (ctx.state === "suspended") void ctx.resume();
@@ -292,6 +379,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     scene = next;
     fillIdx = motifAnchor(next);
     sceneStartedAt = t;
+    kickHits.length = 0;
     round = 0;
     outroStarted = false;
     applyAtmosphere(next, t);
@@ -313,36 +401,8 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   }
 
   function playMelodyNote(note: string, t: number, dur: number, vel: number) {
-    melodyPlayers[scene.band.melodyVoice](note, t, dur, vel);
-  }
-
-  /** Transform the scene's theme into one of its named variations. */
-  function motifVariant(variation: MotifVariation): MotifNote[] {
-    const m = scene.motif;
-    switch (variation) {
-      case "plain":
-        return m;
-      case "answer":
-        return m.map((n) => ({ ...n, scaleIdx: n.scaleIdx + scene.answerShift }));
-      case "lift":
-        return m.map((n) => ({ ...n, scaleIdx: n.scaleIdx + 2, vel: n.vel * 0.9 }));
-      case "displaced":
-        return m.map((n) => ({ ...n, step: Math.min(30, n.step + 2) }));
-      case "ornament": {
-        const out: MotifNote[] = [];
-        for (const n of m) {
-          if (n.beats >= 1.5 && n.step >= 2 && chance(0.7)) {
-            out.push({ scaleIdx: n.scaleIdx - 1, step: n.step - 1, beats: 0.25, vel: n.vel * 0.5 });
-          }
-          out.push(n);
-        }
-        return out;
-      }
-      case "fragment":
-        return m
-          .slice(0, Math.max(2, Math.ceil(m.length / 2)))
-          .map((n) => ({ ...n, vel: n.vel * 0.8 }));
-    }
+    const scale = SYNTHY_MELODY_GAIN[scene.band.melodyVoice] ?? 1;
+    melodyPlayers[scene.band.melodyVoice](note, t, dur, vel * scale);
   }
 
   /** Nudge a scale degree onto a chord tone, for the notes that anchor a phrase. */
@@ -356,26 +416,28 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     return idx;
   }
 
-  /** State a variation of the scene's theme across this chord. */
-  function playMotif(
+  /** Transform and humanize a stored phrase for this chord. */
+  function playPhrase(
     t: number,
     sixteenth: number,
+    notes: MotifNote[],
     variation: MotifVariation,
     velScale: number,
     chord: Chord,
   ) {
     const beatLen = sixteenth * 4;
-    const notes = motifVariant(variation);
-    if (notes.length === 0) return;
-    const firstStep = Math.min(...notes.map((n) => n.step));
-    for (const n of notes) {
+    const varied = varyPhrase(notes, variation, scene.melodyPlan.answerShift);
+    if (varied.length === 0) return;
+    const firstStep = Math.min(...varied.map((n) => n.step));
+    for (const n of varied) {
       let idx = Math.max(0, Math.min(scene.scale.length - 1, n.scaleIdx));
-      // the opening note and long tones lean on chord tones so the theme
-      // follows the harmony instead of floating over it
-      if (n.step === firstStep || n.beats >= 1.5) idx = snapToChordTone(idx, chord);
-      const swungT =
-        t + n.step * sixteenth + (n.step % 2 === 1 ? sixteenth * scene.swing * 0.5 : 0);
-      playMelodyNote(scene.scale[idx], swungT + 0.02 + h(), n.beats * beatLen, n.vel * velScale);
+      if (n.step === firstStep || n.beats >= 1.25) idx = snapToChordTone(idx, chord);
+      const swing = n.step % 2 === 1 ? sixteenth * scene.swing * 0.5 : 0;
+      const pickup = n.pickup ? -sixteenth * 0.12 : 0;
+      const layback = n.accent ? sixteenth * 0.08 : 0;
+      const at = t + n.step * sixteenth + swing + pickup + layback + h();
+      const vel = n.vel * velScale * (n.accent ? 1.12 : 0.94);
+      playMelodyNote(scene.scale[idx], at, n.beats * beatLen, vel);
     }
   }
 
@@ -384,7 +446,8 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     const beatLen = sixteenth * 4;
     const chordDur = beatLen * 8;
     const play = chordPlayers[scene.band.chordVoice];
-    const baseVel = (0.18 + Math.random() * 0.05) * (0.7 + 0.3 * energy);
+    const baseVel =
+      (0.18 + Math.random() * 0.05) * (0.7 + 0.3 * energy) * chordVelScale();
 
     switch (scene.band.comping) {
       case "rolled":
@@ -395,17 +458,29 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
         break;
 
       case "sustained": {
-        // organ/strings/choir: hold the whole chord across both bars
-        const softSustain = scene.band.chordVoice === "organ" || scene.band.chordVoice === "choir";
+        // organ/strings/choir/accordion/cello: hold the whole chord across both bars
+        const softSustain =
+          scene.band.chordVoice === "organ"
+          || scene.band.chordVoice === "choir"
+          || scene.band.chordVoice === "accordion"
+          || scene.band.chordVoice === "cello"
+          || scene.band.chordVoice === "strings";
         const susVel = baseVel * (softSustain ? 0.38 : 0.45);
         chord.notes.forEach((n, i) => {
           play(n, t + i * 0.01, chordDur * 0.96, susVel);
         });
         // gentle mid-chord breath so sustained pads don't sit perfectly still
-        if (energy >= 0.35 && chance(0.45)) {
+        if (energy >= 0.35 && chance(0.55)) {
           const breathVel = susVel * 0.28;
           chord.notes.forEach((n, i) => {
             play(n, t + beatLen * 4 + i * 0.015 + h(), beatLen * 3.6, breathVel);
+          });
+        }
+        // second breath in bar two for thicker movement
+        if (energy >= 0.55 && chance(0.4)) {
+          const echoVel = susVel * 0.2;
+          chord.notes.slice(1).forEach((n, i) => {
+            play(n, t + beatLen * 6 + i * 0.02 + h(), beatLen * 2.4, echoVel);
           });
         }
         break;
@@ -456,22 +531,35 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     if (energy < 0.4) return;
     const beatLen = sixteenth * 4;
     const behavior = scene.band.melodyBehavior;
+    const plan = scene.melodyPlan;
 
     if (behavior === "motif") {
-      // theme and variations: the intro hints at a fragment, each grooving
-      // round restates the theme through the scene's variation cycle (with
-      // the shifted "answer" on chord 3), and the outro echoes the fragment
       const outro = round === scene.rounds - 1;
+
+      // intro round: just a whisper of the hook before the band settles in
       if (round === 0) {
-        if (chordIdx === 2 && chance(0.6)) playMotif(t, sixteenth, "fragment", 0.7, chord);
-      } else if (chordIdx === 0 && chance(0.85)) {
-        const v = outro
-          ? "fragment"
-          : scene.variationOrder[(round - 1) % scene.variationOrder.length];
-        playMotif(t, sixteenth, v, outro ? 0.75 : 1, chord);
-      } else if (chordIdx === 2 && !outro && chance(0.6)) {
-        playMotif(t, sixteenth, "answer", 0.8, chord);
+        if (chordIdx === 2 && chance(0.55)) {
+          playPhrase(t, sixteenth, plan.phrases.A, "fragment", 0.65, chord);
+        }
+        return;
       }
+
+      const slot = plan.slots[chordIdx];
+      if (!slot) return;
+
+      // middle rounds layer a variation cycle on top of the song structure
+      let variation = slot.variation;
+      if (!outro && chordIdx === 0 && round > 0) {
+        variation = plan.roundCycle[(round - 1) % plan.roundCycle.length];
+      }
+      if (outro) variation = "fragment";
+
+      const presence = slot.presence * (outro ? 0.75 : 0.88 + 0.12 * energy);
+      if (!chance(presence)) return;
+
+      const phrase = plan.phrases[slot.phraseId];
+      const velScale = outro ? 0.72 : 0.92 + 0.08 * energy;
+      playPhrase(t, sixteenth, phrase, variation, velScale, chord);
     } else if (behavior === "arp" && chance(0.55)) {
       // a gentle run through the scale in bar two
       let dir = chance(0.5) ? 1 : -1;
@@ -503,7 +591,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     const bed = scene.ambience.bed;
     if (bed === "rain" && chance(0.6)) {
       voices.playThunder(t + Math.random() * 4);
-    } else if (bed === "city" && chance(0.55)) {
+    } else if (bed === "city" && chance(0.3)) {
       voices.playTrainHorn(t + Math.random() * 3);
     } else if ((bed === "wind" || bed === "fire") && chance(0.55)) {
       if (chance(0.5)) voices.playOwl(t + Math.random() * 2);
@@ -521,17 +609,41 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     }
   }
 
+  /** Soft upper-voice doubling — complementary timbre, octave up for cohesion. */
+  function scheduleHarmony(
+    t: number,
+    energy: number,
+    chord: Chord,
+    chordDur: number,
+  ) {
+    const harmony = scene.band.harmonyVoice;
+    if (!harmony || harmony === scene.band.chordVoice || energy < 0.45) return;
+    const p = (scene.band.harmonyChance ?? 0.55) * (0.65 + 0.35 * energy);
+    if (!chance(p)) return;
+    const play = chordPlayers[harmony];
+    const vel = (0.07 + Math.random() * 0.04) * (0.55 + 0.45 * energy) * chordVelScale(harmony);
+    chord.notes.slice(1).forEach((n, i) => {
+      play(
+        noteFromMidi(midiFromNote(n) + 12),
+        t + i * 0.025 + h(),
+        chordDur * 0.9,
+        vel,
+      );
+    });
+  }
+
   function scheduleChordStart(t: number, sixteenth: number, energy: number) {
     const beatLen = sixteenth * 4;
     const chordDur = beatLen * 8; // two bars
     const chord = scene.progression[chordIdx];
 
     scheduleComping(t, sixteenth, energy, chord);
+    scheduleHarmony(t, energy, chord, chordDur);
 
     // warm pad swell underneath (meters with the chords)
     if (scene.padOn && energy >= 0.45) {
       const padNotes = [12, 19, 26].map((iv) => noteFromMidi(chord.rootMidi + iv));
-      chordVoices.playPad(padNotes, t, chordDur, 0.03 + 0.025 * energy);
+      chordVoices.playPad(padNotes, t, chordDur, 0.02 + 0.016 * energy);
     }
 
     // quiet sub undertone — drifts root → fifth, stays under the main voices
@@ -603,7 +715,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     if (scene.band.comping === "rolled" && step === 12 && energy >= 0.5 && chance(0.55)) {
       const play = chordPlayers[scene.band.chordVoice];
       chord.notes.slice(1).forEach((n, i) => {
-        play(n, t + i * 0.025 + h(), beatLen * 1.5, 0.09);
+        play(n, t + i * 0.025 + h(), beatLen * 1.5, 0.09 * chordVelScale());
       });
     }
 
@@ -652,11 +764,15 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
 
       if (kit.kicks.includes(step)) {
         const kickT = t + h();
-        voices.playKick(kickT, 0.5 * dVel * kit.kickVel);
+        const vel = 0.5 * dVel * kit.kickVel;
+        voices.playKick(kickT, vel);
+        triggerKickPulse(kickT, vel);
         mixDynamics.triggerDuck(kickT, 0.74, 0.22);
       } else if (kit.kickGhosts?.steps.includes(step) && chance(kit.kickGhosts.p * energy)) {
         const kickT = t + h();
-        voices.playKick(kickT, 0.25 * kit.kickVel);
+        const vel = 0.25 * kit.kickVel;
+        voices.playKick(kickT, vel);
+        triggerKickPulse(kickT, vel * 0.65);
         mixDynamics.triggerDuck(kickT, 0.82, 0.14);
       }
 
@@ -741,6 +857,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     playbackStream: playbackStream.stream,
     start(volDb) {
       step = 0; chordIdx = -1; round = 0; outroStarted = false;
+      kickHits.length = 0;
       nextTime = ctx.currentTime + 0.1;
       sceneStartedAt = nextTime;
       applyAtmosphere(scene, ctx.currentTime, true);
@@ -786,6 +903,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
       if (dur <= 0) return 0;
       return Math.min(1, Math.max(0, (ctx.currentTime - sceneStartedAt) / dur));
     },
+    getKickPulse,
     getChannelLevels() {
       const out = {} as ChannelLevels;
       for (const id of Object.keys(meters) as ChannelId[]) {

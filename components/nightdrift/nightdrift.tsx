@@ -1,13 +1,13 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useNightdrift } from "@/hooks/use-nightdrift";
-import { MOODS, TIMERS, type MoodKey } from "@/lib/audio/moods";
+import type { MoodKey } from "@/lib/audio/moods";
 import { pick } from "@/lib/audio/random";
+import BottomNav from "./bottom-nav";
 import DriftPresence from "./drift-presence";
 import HaloButton from "./halo-button";
 import NoiseOverlay from "./noise-overlay";
-import Pill from "./pill";
 import Starfield from "./starfield";
 
 // dusk tint at the top of the sky, per mood — warm plum, smoky blue, rain slate
@@ -76,19 +76,34 @@ function formatTime(totalSeconds: number) {
   return `${m}:${s}`;
 }
 
-function ControlRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-wrap items-center gap-3.5">
-      <span className="w-[90px] shrink-0 font-sans text-xs uppercase tracking-[0.16em] text-haze-dim">
-        {label}
-      </span>
-      {children}
-    </section>
-  );
-}
 
 export default function Nightdrift() {
   const tagline = useTagline();
+  const haloWrapRef = useRef<HTMLDivElement>(null);
+  const [orbitCenter, setOrbitCenter] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const el = haloWrapRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0) return;
+      setOrbitCenter({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      });
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
 
   const {
     playing, start, stop,
@@ -96,7 +111,7 @@ export default function Nightdrift() {
     volumeDb, setVolumeDb,
     crackleOn, setCrackleOn,
     timerMin, setTimer, remaining, timerProgress,
-    scene, sceneProgress, getChannelLevels,
+    scene, sceneProgress, getChannelLevels, getKickPulse,
   } = useNightdrift();
 
   return (
@@ -104,7 +119,7 @@ export default function Nightdrift() {
       className="mood-bg relative flex min-h-screen flex-col items-center overflow-hidden font-display text-ink"
       style={{ "--mood-dusk": MOOD_DUSK[mood] } as React.CSSProperties}
     >
-      <Starfield />
+      <Starfield center={orbitCenter} />
       <NoiseOverlay active={crackleOn} />
 
       <header className="z-10 pt-11 text-center">
@@ -114,15 +129,17 @@ export default function Nightdrift() {
         </div>
       </header>
 
-      <main className="z-10 flex flex-1 flex-col items-center justify-center py-5">
-        <HaloButton
-          playing={playing}
-          progress={sceneProgress}
-          lineup={scene?.lineup ?? null}
-          getLevels={getChannelLevels}
-          timerProgress={timerProgress}
-          onClick={playing ? () => stop() : start}
-        />
+      <main className="z-10 flex flex-1 flex-col items-center justify-center py-5 pb-[120px]">
+        <div ref={haloWrapRef} className="relative">
+          <HaloButton
+            playing={playing}
+            progress={sceneProgress}
+            lineup={scene?.lineup ?? null}
+            getLevels={getChannelLevels}
+            getKickPulse={getKickPulse}
+            timerProgress={timerProgress}
+          />
+        </div>
 
         <div className="mt-7 flex h-20 flex-col items-center gap-1.5">
           <DriftPresence show={playing && !!scene}>
@@ -153,50 +170,18 @@ export default function Nightdrift() {
         </div>
       </main>
 
-      <footer className="z-10 flex w-full max-w-[520px] flex-col gap-[18px] px-6 pb-12">
-        <ControlRow label="mood">
-          <div className="flex flex-wrap gap-2">
-            {(Object.entries(MOODS) as [MoodKey, (typeof MOODS)[MoodKey]][]).map(([key, m]) => (
-              <Pill key={key} active={mood === key} onClick={() => setMood(key)} title={m.hint}>
-                {m.label}
-              </Pill>
-            ))}
-          </div>
-        </ControlRow>
-
-        <ControlRow label="sleep timer">
-          <div className="flex flex-wrap gap-2">
-            {TIMERS.map((t) => (
-              <Pill key={t.label} active={timerMin === t.min} onClick={() => setTimer(t.min)}>
-                {t.label}
-              </Pill>
-            ))}
-          </div>
-        </ControlRow>
-
-        <ControlRow label="volume">
-          <input
-            type="range"
-            min={-30}
-            max={-4}
-            step={1}
-            value={volumeDb}
-            onChange={(e) => setVolumeDb(Number(e.target.value))}
-            className="volume-slider min-w-40 flex-1"
-            aria-label="Volume"
-          />
-        </ControlRow>
-
-        <ControlRow label="vinyl">
-          <Pill
-            active={crackleOn}
-            onClick={() => setCrackleOn(!crackleOn)}
-            aria-pressed={crackleOn}
-          >
-            {crackleOn ? "crackle on" : "crackle off"}
-          </Pill>
-        </ControlRow>
-      </footer>
+      <BottomNav
+        mood={mood}
+        setMood={setMood}
+        volumeDb={volumeDb}
+        setVolumeDb={setVolumeDb}
+        crackleOn={crackleOn}
+        setCrackleOn={setCrackleOn}
+        timerMin={timerMin}
+        setTimer={setTimer}
+        playing={playing}
+        onTogglePlay={playing ? () => stop() : start}
+      />
     </div>
   );
 }

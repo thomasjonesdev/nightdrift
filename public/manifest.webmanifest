@@ -1,7 +1,7 @@
 {
   "name": "nightdrift",
   "short_name": "nightdrift",
-  "description": "Generative lofi for falling asleep — a swung boom-bap beat, Rhodes-style chords, and vinyl crackle that never repeats.",
+  "description": "Programmatic lofi for falling asleep — a swung boom-bap beat, Rhodes-style chords, and vinyl crackle that never repeats.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#060610",
