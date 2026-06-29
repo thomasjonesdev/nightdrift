@@ -4,25 +4,47 @@
 // The engine plays a scene for a few rounds (8-bar passes) and then
 // segues into the next one.
 
-import { pickAmbience, type AmbienceBed, type AmbienceSpec } from "./ambience";
+import { pickAmbienceStack, type AmbienceBed, type AmbienceSpec } from "./ambience";
 import {
   assembleBand,
   KITS,
   type Band,
   type BassVoice,
   type ChordVoice,
+  type DrumKit,
   type KitId,
   type MelodyVoice,
 } from "./bands";
-import type { MoodKey } from "./moods";
+import { generateCompingPattern, type CompingPattern } from "./comping-patterns";
+import { generateBassLinePlan, type BassLinePlan } from "./bass-line-plan";
+import type { RiffNote } from "./bass-patterns";
+import { generateTexturePlan, type TexturePlan } from "./texture-plan";
+import {
+  generateSceneDNA,
+  mutateDrumKit,
+  shapeAmbience,
+  type EnergyShape,
+  type SceneDNA,
+} from "./drift-algorithm";
+import { applyProgressionVariants } from "./progression-grammar";
+import {
+  applyTapeContinuity,
+  crossoverDna,
+  planSegue,
+  type RadioState,
+} from "./radio-director";
+import { MINED_TUNE_PACKAGES } from "./mined-tunes";
 import {
   assembleMelodyPlan,
+  applyMelodyMutations,
+  bindMelodyToProgression,
   type MelodyPlan,
   type MotifNote,
-  type MotifVariation,
 } from "./melodies";
+import type { MoodKey } from "./moods";
+import { MOOD_PROFILES } from "./mood-profile";
 import { noteFromMidi, pitchClassName } from "./notes";
-import { chance, pick, rand, randInt, weightedPick } from "./random";
+import { chance, createRng, pick, rand, randInt, runWithRng, weightedPick, type Rng } from "./random";
 
 // ---- harmony ---------------------------------------------------------------
 
@@ -65,6 +87,7 @@ export interface Chord {
   thirdIv: number;
   /** Chord voicing for the keys, low to high. */
   notes: string[];
+  quality: Quality;
 }
 
 interface FamilyConfig {
@@ -83,7 +106,7 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
   mellow: {
     keys: [0, 5, 7, 2, 10], // C F G D Bb
     minor: false,
-    bpm: [68, 76],
+    bpm: [74, 84],
     progressions: [
       // IV iii ii I — the classic study-beats descent
       [
@@ -139,7 +162,7 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
   jazzy: {
     keys: [0, 5, 10, 3, 7], // C F Bb Eb G
     minor: false,
-    bpm: [70, 78],
+    bpm: [78, 92],
     progressions: [
       // ii V I vi — smoky turnaround
       [
@@ -186,47 +209,47 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
     ],
   },
   rainy: {
-    keys: [9, 2, 4, 0], // Am Dm Em Cm
-    minor: true,
-    bpm: [62, 70],
+    keys: [0, 5, 7, 2, 9], // C F G D Am — major centers, rain without minor-key drama
+    minor: false,
+    bpm: [56, 66],
     progressions: [
-      // i bVI iv V — the late-night original
+      // I vi IV V — rain on a warm window
       [
-        { degree: 0, quality: "min9hi" },
-        { degree: 8, quality: "maj9" },
-        { degree: 5, quality: "min9" },
+        { degree: 0, quality: "maj9" },
+        { degree: 9, quality: "min9" },
+        { degree: 5, quality: "maj9" },
         { degree: 7, quality: "dom9" },
       ],
-      // i iv bVI bVII
+      // I IV vi V
       [
-        { degree: 0, quality: "min9hi" },
-        { degree: 5, quality: "min9" },
-        { degree: 8, quality: "maj9" },
-        { degree: 10, quality: "dom13" },
+        { degree: 0, quality: "maj69" },
+        { degree: 5, quality: "maj9" },
+        { degree: 9, quality: "min9" },
+        { degree: 7, quality: "dom13" },
       ],
-      // i bIII bVI V
+      // vi IV I V — gentle lift home
       [
-        { degree: 0, quality: "min9" },
-        { degree: 3, quality: "maj9" },
-        { degree: 8, quality: "maj9" },
+        { degree: 9, quality: "min9" },
+        { degree: 5, quality: "maj9" },
+        { degree: 0, quality: "maj9" },
         { degree: 7, quality: "dom9" },
       ],
-      // i bVII bVI V
+      // I iii vi IV
       [
-        { degree: 0, quality: "min9hi" },
-        { degree: 10, quality: "dom13" },
-        { degree: 8, quality: "maj9" },
-        { degree: 7, quality: "dom9" },
+        { degree: 0, quality: "maj9" },
+        { degree: 4, quality: "min9" },
+        { degree: 9, quality: "min9" },
+        { degree: 5, quality: "maj69" },
       ],
-      // i11 bVImaj7 bIII bVIIsus — rain through an open window
+      // I Vsus IV iii — suspended grey sky, still major tonic
       [
-        { degree: 0, quality: "min11" },
-        { degree: 8, quality: "maj7" },
-        { degree: 3, quality: "maj9" },
-        { degree: 10, quality: "dom7sus" },
+        { degree: 0, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 5, quality: "maj69" },
+        { degree: 4, quality: "min11" },
       ],
     ],
-    scaleOffsets: [12, 15, 17, 19, 22, 24, 27],
+    scaleOffsets: [2, 4, 5, 7, 9, 11, 12, 14],
     names: [
       "rain on glass", "umbrella graveyard", "streetlight halo",
       "thunder two towns over", "wet asphalt mirror", "november windowsill",
@@ -237,61 +260,10 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
 };
 
 // Re-export melody types used by the engine and UI.
+export type { EnergyShape } from "./drift-algorithm";
 export type { MelodyPlan, MotifNote, MotifVariation } from "./melodies";
-
-// ---- bass riff ---------------------------------------------------------------
-
-export type RiffDeg = "root" | "third" | "fifth" | "octave" | "approach";
-
-export interface RiffNote {
-  /** 16th-note position within the chord's two bars (0–31). */
-  step: number;
-  /** Chord-relative degree; "approach" leans chromatically into the next chord. */
-  deg: RiffDeg;
-  /** Duration in beats. */
-  beats: number;
-  /** 0–1 within the riff; the engine drops quieter notes at low energy. */
-  vel: number;
-}
-
-/**
- * A two-bar bass-guitar figure, generated once per scene and repeated under
- * every chord — the rhythmic theme of the scene. Syncopations land on (or
- * just after) the kit's kicks so bass and drums feel like one player.
- */
-function makeBassRiff(kickSteps: number[]): RiffNote[] {
-  const riff: RiffNote[] = [
-    { step: 0, deg: "root", beats: rand(1.2, 1.8), vel: 1 },
-    { step: 16, deg: chance(0.6) ? "root" : "fifth", beats: rand(1, 1.5), vel: 0.9 },
-  ];
-  const taken = new Set([0, 16]);
-
-  // syncopated answers: on the kick, or the "and" right after it
-  const candidates = kickSteps
-    .filter((s) => s !== 0 && s !== 16)
-    .flatMap((s) => [s, s + 2])
-    .concat([10, 22, 26])
-    .filter((s) => s > 0 && s < 30 && !taken.has(s));
-  const count = randInt(2, 4);
-  for (let i = 0; i < count && candidates.length > 0; i++) {
-    const s = candidates.splice(randInt(0, candidates.length - 1), 1)[0];
-    if (taken.has(s)) continue;
-    taken.add(s);
-    const deg: RiffDeg =
-      s >= 26 && chance(0.6)
-        ? "approach" // walk into the next chord
-        : pick(["root", "root", "octave", "fifth", "fifth", "third"]);
-    riff.push({ step: s, deg, beats: rand(0.5, 1), vel: rand(0.5, 0.75) });
-  }
-
-  // an occasional ghosted offbeat 16th, felt more than heard
-  if (chance(0.45)) {
-    const s = pick([7, 15, 23]);
-    if (!taken.has(s)) riff.push({ step: s, deg: "root", beats: 0.3, vel: 0.3 });
-  }
-
-  return riff.sort((a, b) => a.step - b.step);
-}
+export type { RiffDeg, RiffNote } from "./bass-patterns";
+export type { BassLinePlan } from "./bass-line-plan";
 
 // ---- scenes ------------------------------------------------------------------
 
@@ -318,7 +290,11 @@ export interface Scene {
   voicingStyle: VoicingStyle;
   /** Band's bass style with "either" resolved per scene. */
   bassStyle: "anchor" | "walking" | "groove";
-  /** Two-bar bass figure for the "groove" style, locked to the kit's kicks. */
+  /** Per-chord bass figures — one line across the progression. */
+  bassLinePlan: BassLinePlan;
+  /** Chord-tone arps, pickups, tails, and inner lines for continuous texture. */
+  texturePlan: TexturePlan;
+  /** @deprecated Use bassLinePlan.byChord[chordIdx] — flat merge for legacy callers. */
   bassRiff: RiffNote[];
   padOn: boolean;
   ambience: AmbienceSpec;
@@ -328,6 +304,20 @@ export interface Scene {
   reverbSend: number;
   reverbDecay: number;
   reverbDamp: number;
+  /** Tempo-synced echo wet level. */
+  delayWet: number;
+  /** Tempo-synced echo feedback. */
+  delayFeedback: number;
+  /** Pad/bed/harmony bus trim — rainy sits wetter, jazzy stays dry. */
+  textureBusGain: number;
+  /** Algorithmic feel profile — timing, patterns, effects, environment. */
+  dna: SceneDNA;
+  /** Kit grammar mutated for this scene's groove character. */
+  drumGrammar: DrumKit;
+  /** Algorithmic chord voicing grid for this scene's comping style. */
+  compingPattern: CompingPattern;
+  /** Seed for reproducible generation — share via ?seed= in the URL. */
+  seed: number;
 }
 
 export interface ProgressionStepSummary {
@@ -355,6 +345,10 @@ export interface SceneSummary {
   band: string;
   lineup: SceneLineup;
   progression: ProgressionStepSummary[];
+  /** Scene seed — same seed + mood reproduces this track. */
+  seed: number;
+  /** Structural energy arc for this scene. */
+  energyShape: EnergyShape;
 }
 
 function chordDisplayName(root: string, quality: Quality): string {
@@ -366,8 +360,7 @@ function chordDisplayName(root: string, quality: Quality): string {
 }
 
 export function summarize(scene: Scene): SceneSummary {
-  const { name, family, keyName, bpm, rounds, progressionIdx, progression } = scene;
-  const specs = FAMILIES[family].progressions[progressionIdx];
+  const { name, family, keyName, bpm, rounds, progression } = scene;
   return {
     name,
     family,
@@ -382,9 +375,11 @@ export function summarize(scene: Scene): SceneSummary {
       kit: scene.band.kit,
       ambience: scene.ambience.bed,
     },
-    progression: progression.map((chord, i) => ({
-      name: chordDisplayName(chord.root, specs[i].quality),
+    progression: progression.map((chord) => ({
+      name: chordDisplayName(chord.root, chord.quality),
     })),
+    seed: scene.seed,
+    energyShape: scene.dna.structure.energyShape,
   };
 }
 
@@ -435,6 +430,7 @@ function buildProgression(keyPc: number, specs: ChordSpec[], style: VoicingStyle
       rootMidi,
       thirdIv: thirdInterval(spec.quality),
       notes: voicing.map(noteFromMidi),
+      quality: spec.quality,
     };
   });
 }
@@ -446,12 +442,29 @@ function buildScale(keyPc: number, offsets: number[]): string[] {
   return offsets.map((o) => noteFromMidi(tonic + o));
 }
 
-export function makeScene(family: MoodKey, prev?: Scene): Scene {
-  const cfg = FAMILIES[family];
+export function makeScene(
+  family: MoodKey,
+  prev?: Scene,
+  sceneRng?: Rng,
+  radio?: RadioState,
+): Scene {
+  const rng = sceneRng ?? createRng();
+  return runWithRng(rng, () => buildScene(family, prev, rng.seed, radio));
+}
 
-  // wander to a different key center when staying in the same family
-  let keyPc = pick(cfg.keys);
-  if (prev && prev.family === family && cfg.keys.length > 1) {
+function buildScene(
+  family: MoodKey,
+  prev: Scene | undefined,
+  seed: number,
+  radio?: RadioState,
+): Scene {
+  const cfg = FAMILIES[family];
+  const segue = prev ? planSegue(radio ?? { history: [] }, prev, family, cfg.keys) : null;
+
+  // wander to a different key center — director may steer complementary/contrast
+  let keyPc = segue?.hints.keyPc ?? pick(cfg.keys);
+  if (!cfg.keys.includes(keyPc)) keyPc = pick(cfg.keys);
+  if (prev && prev.family === family && cfg.keys.length > 1 && keyPc === prev.keyPc) {
     while (keyPc === prev.keyPc) keyPc = pick(cfg.keys);
   }
 
@@ -466,46 +479,118 @@ export function makeScene(family: MoodKey, prev?: Scene): Scene {
   if (prev) while (name === prev.name) name = pick(cfg.names);
 
   const scale = buildScale(keyPc, cfg.scaleOffsets);
-  const band = assembleBand(family, prev?.band.id);
-  const melodyPlan = assembleMelodyPlan(family, scale.length, prev?.melodyPlan);
+  const band = assembleBand(family, prev?.band.id, segue?.hints.avoidBandIds);
+  let dna = generateSceneDNA(family, band, band.kit);
+  if (prev && segue?.hints.inheritTrait) {
+    dna = crossoverDna(prev, dna, segue.hints.inheritTrait);
+  }
 
-  // voicing character leans toward the band's comping: sustained voices love
-  // open spreads, stabs sit best on shells, everything else favors the clusters
   const voicingStyle = weightedPick<VoicingStyle>(["cozy", "open", "shell"], (s) => {
-    if (band.comping === "sustained") return s === "open" ? 2 : 1;
-    if (band.comping === "stabs") return s === "shell" ? 2 : 1;
-    return s === "cozy" ? 2 : 1;
+    if (family === "jazzy") {
+      if (s === "shell") return 2.8;
+      if (s === "open") return 1.6;
+      return 0.7;
+    }
+    if (family === "rainy") {
+      if (s === "cozy") return 3.2;
+      if (s === "open") return 1.4;
+      return 0.5;
+    }
+    if (band.comping === "sustained") return s === "open" ? 2.5 : 1;
+    if (band.comping === "stabs") return s === "shell" ? 2.2 : 1;
+    return s === "cozy" ? 2.5 : 1;
   });
 
-  return {
+  const moodProd = MOOD_PROFILES[family].production;
+
+  const progressionSpecs = applyProgressionVariants(
+    cfg.progressions[progressionIdx],
+    dna.harmony,
+    cfg.minor,
+    family,
+  ) as ChordSpec[];
+  const progression = buildProgression(keyPc, progressionSpecs, voicingStyle);
+
+  const rawMelodyPlan = assembleMelodyPlan(
+    family,
+    scale,
+    progressionSpecs,
+    progression,
+    prev?.melodyPlan,
+    dna.melody,
+  );
+  const mutatedMelodyPlan = applyMelodyMutations(rawMelodyPlan, dna.melody, scale.length);
+  const melodyPlan = bindMelodyToProgression(mutatedMelodyPlan, progression, scale);
+
+  const compingPattern = generateCompingPattern(band.comping, 4, dna.patterns);
+  const drumGrammar = mutateDrumKit(KITS[band.kit], dna.patterns);
+  const ambience = shapeAmbience(pickAmbienceStack(family), dna.environment);
+
+  const bassStyle: "anchor" | "walking" | "groove" =
+    band.bassStyle === "either"
+      ? band.bassVoice === "bassGuitar"
+        ? (chance(0.7) ? "groove" : "anchor")
+        : (chance(0.5) ? "walking" : "anchor")
+      : band.bassStyle;
+
+  const minedPkg = MINED_TUNE_PACKAGES.find((p) => p.id === melodyPlan.packageId);
+  const bassLinePlan = generateBassLinePlan(
+    bassStyle,
+    progression,
+    drumGrammar,
+    dna.patterns,
+    {
+      melodyMotif: melodyPlan.phrases.A,
+      minedBass: minedPkg?.bassPhrase,
+    },
+  );
+  const texturePlan = generateTexturePlan(melodyPlan, progression, scale, band.melodyBehavior);
+
+  let bpm = Math.round(rand(cfg.bpm[0], cfg.bpm[1]));
+  if (segue?.hints.bpmAnchor !== undefined) {
+    bpm = Math.round(
+      Math.max(cfg.bpm[0], Math.min(cfg.bpm[1], segue.hints.bpmAnchor + rand(-3, 3))),
+    );
+  }
+
+  const built: Scene = {
     family,
     name,
     keyPc,
     keyName: `${pitchClassName(keyPc)} ${cfg.minor ? "minor" : "major"}`,
-    bpm: Math.round(rand(cfg.bpm[0], cfg.bpm[1])),
-    swing: rand(0.5, 0.62),
+    bpm,
+    swing: rand(...MOOD_PROFILES[family].swing) * dna.timing.swingFeel,
     progressionIdx,
-    progression: buildProgression(keyPc, cfg.progressions[progressionIdx], voicingStyle),
+    progression,
     scale,
     melodyPlan,
     motif: melodyPlan.phrases.A,
     rounds: randInt(3, 5),
     band,
     voicingStyle,
-    bassStyle:
-      band.bassStyle === "either"
-        ? band.bassVoice === "bassGuitar"
-          ? (chance(0.7) ? "groove" : "anchor")
-          : (chance(0.5) ? "walking" : "anchor")
-        : band.bassStyle,
-    bassRiff: makeBassRiff([...KITS[band.kit].kicks]),
-    padOn: chance(band.padChance * (family === "rainy" ? 1.4 : 1)),
-    ambience: pickAmbience(family),
-    tapeCutoff: rand(band.tapeCutoff[0], band.tapeCutoff[1]),
-    wobbleCents: rand(4, 10),
+    bassStyle,
+    bassLinePlan,
+    texturePlan,
+    bassRiff: bassLinePlan.byChord.flat(),
+    padOn: chance(Math.min(1, 0.12 + band.padChance * 0.72 * moodProd.padChanceMul)),
+    ambience,
+    tapeCutoff: rand(band.tapeCutoff[0], band.tapeCutoff[1]) * moodProd.tapeCutoffMul,
+    wobbleCents: rand(...moodProd.wobbleCents),
     wobbleRate: rand(0.3, 0.8),
-    reverbSend: rand(band.reverb.send[0], band.reverb.send[1]),
-    reverbDecay: rand(band.reverb.decay[0], band.reverb.decay[1]),
-    reverbDamp: rand(band.reverb.damp[0], band.reverb.damp[1]),
+    reverbSend: Math.min(
+      0.88,
+      rand(band.reverb.send[0], band.reverb.send[1]) * 1.55 * moodProd.reverbSendMul,
+    ),
+    reverbDecay: rand(band.reverb.decay[0], band.reverb.decay[1]) * 1.45 * moodProd.reverbDecayMul,
+    reverbDamp: rand(band.reverb.damp[0], band.reverb.damp[1]) * 0.82 * moodProd.reverbDampMul,
+    delayWet: rand(...moodProd.delayWet),
+    delayFeedback: rand(...moodProd.delayFeedback),
+    textureBusGain: moodProd.textureBusGain,
+    dna,
+    drumGrammar,
+    compingPattern,
+    seed,
   };
+
+  return prev && segue ? applyTapeContinuity(prev, built, segue.hints.strategy) : built;
 }

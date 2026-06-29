@@ -6,31 +6,72 @@
 // engine's event scheduler.
 
 import type { MoodKey } from "./moods";
-import { chance, rand, weightedPick } from "./random";
+import { chance, pick, rand, weightedPick } from "./random";
 
 export type AmbienceBed = "none" | "rain" | "wind" | "city" | "fire";
+
+export interface SecondaryAmbience {
+  bed: AmbienceBed;
+  /** 0..1 — mix weight relative to the primary bed level. */
+  weight: number;
+}
 
 export interface AmbienceSpec {
   bed: AmbienceBed;
   /** 0..1 — how present the bed is in the mix. */
   level: number;
+  /** Slow gain breathing depth (1 = default bed LFO). */
+  movement?: number;
+  /** Fire crackle rate multiplier (0 = off). */
+  sparkleRate?: number;
+  /** Optional low-level secondary bed layered under the primary. */
+  secondary?: SecondaryAmbience;
 }
 
 const BED_WEIGHTS: Record<MoodKey, [AmbienceBed, number][]> = {
-  mellow: [["none", 0.18], ["fire", 0.3], ["rain", 0.26], ["wind", 0.26]],
-  jazzy: [["none", 0.2], ["city", 0.45], ["rain", 0.35]],
-  rainy: [["rain", 0.7], ["wind", 0.18], ["city", 0.12]],
+  mellow: [["none", 0.28], ["fire", 0.38], ["wind", 0.22], ["rain", 0.12]],
+  jazzy: [["city", 0.55], ["none", 0.28], ["rain", 0.17]],
+  rainy: [["rain", 0.82], ["wind", 0.12], ["city", 0.06]],
 };
 
 export function pickAmbience(family: MoodKey): AmbienceSpec {
   const bed = weightedPick(BED_WEIGHTS[family], (e) => e[1])[0];
-  const level = bed === "none" ? 0 : family === "rainy" ? rand(0.65, 1) : rand(0.45, 0.8);
+  const level = bed === "none"
+    ? 0
+    : family === "rainy"
+      ? rand(0.72, 1)
+      : family === "jazzy"
+        ? rand(0.38, 0.68)
+        : rand(0.42, 0.72);
   return { bed, level };
+}
+
+/** Primary bed plus an optional complementary secondary layer. */
+export function pickAmbienceStack(family: MoodKey): AmbienceSpec {
+  const primary = pickAmbience(family);
+  if (primary.bed === "none" || !chance(family === "rainy" ? 0.55 : 0.35)) {
+    return primary;
+  }
+  const altBeds = BED_WEIGHTS[family]
+    .map(([bed]) => bed)
+    .filter((bed): bed is AmbienceBed => bed !== "none" && bed !== primary.bed);
+  const secondaryBed = pick(altBeds.length > 0 ? altBeds : (["wind"] as const));
+  return {
+    ...primary,
+    secondary: {
+      bed: secondaryBed,
+      weight: family === "rainy" ? rand(0.25, 0.45) : rand(0.15, 0.35),
+    },
+  };
 }
 
 export interface Ambience {
   /** Crossfade toward a bed; `fast` for the initial start. */
   set(spec: AmbienceSpec, t: number, fast?: boolean): void;
+  /** Adjust bed breathing depth without a full crossfade. */
+  morphMovement(movement: number, t: number, rampSecs?: number): void;
+  /** Adjust primary level and secondary mix weight without changing beds. */
+  morphLevels(primaryLevel: number, secondaryWeight: number, t: number, rampSecs?: number): void;
   /** Called every step: per-bed grain (fire crackles). */
   sparkle(t: number): void;
 }
@@ -134,22 +175,66 @@ export function createAmbience(
   }
 
   let current: AmbienceBed = "none";
+  let secondaryBed: AmbienceBed = "none";
   let level = 0;
+  let secondaryWeight = 0;
+  let sparkleRate = 1;
+  let movement = 1;
+
+  function applyBedTargets(spec: AmbienceSpec, t: number, tc: number) {
+    for (const [name, bed] of Object.entries(beds) as [AmbienceBed, Bed][]) {
+      let target = 0;
+      if (name === spec.bed) target = bed.base * spec.level;
+      else if (spec.secondary && name === spec.secondary.bed) {
+        target = bed.base * spec.level * spec.secondary.weight;
+      }
+      bed.gain.gain.setTargetAtTime(target, t, tc);
+      bed.lfoAmt?.gain.setTargetAtTime(
+        target * (bed.lfoScale ?? 0) * movement,
+        t,
+        tc,
+      );
+    }
+  }
 
   return {
     set(spec, t, fast = false) {
       current = spec.bed;
+      secondaryBed = spec.secondary?.bed ?? "none";
       level = spec.level;
-      const tc = fast ? 1 : 4;
-      for (const [name, bed] of Object.entries(beds) as [AmbienceBed, Bed][]) {
-        const target = name === spec.bed ? bed.base * spec.level : 0;
-        bed.gain.gain.setTargetAtTime(target, t, tc);
-        bed.lfoAmt?.gain.setTargetAtTime(target * (bed.lfoScale ?? 0), t, tc);
-      }
+      secondaryWeight = spec.secondary?.weight ?? 0;
+      sparkleRate = spec.sparkleRate ?? 1;
+      movement = spec.movement ?? 1;
+      applyBedTargets(spec, t, fast ? 1 : 4);
+    },
+
+    morphMovement(nextMovement, t, rampSecs = 2.5) {
+      movement = nextMovement;
+      const bed = beds[current];
+      if (!bed?.lfoAmt) return;
+      const target = bed.base * level * movement * (bed.lfoScale ?? 0);
+      bed.lfoAmt.gain.setTargetAtTime(target, t, rampSecs);
+    },
+
+    morphLevels(primaryLevel, nextSecondaryWeight, t, rampSecs = 2.5) {
+      level = primaryLevel;
+      secondaryWeight = nextSecondaryWeight;
+      applyBedTargets(
+        {
+          bed: current,
+          level: primaryLevel,
+          secondary:
+            secondaryBed !== "none"
+              ? { bed: secondaryBed, weight: nextSecondaryWeight }
+              : undefined,
+        },
+        t,
+        rampSecs,
+      );
     },
 
     sparkle(t) {
-      if (current !== "fire" || !chance(0.35)) return;
+      if (current !== "fire" || !chance(0.35 * sparkleRate)) return;
       const ticks = chance(0.3) ? 2 : 1;
       for (let i = 0; i < ticks; i++) {
         const n = ctx.createBufferSource();

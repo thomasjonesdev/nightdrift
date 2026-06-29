@@ -8,8 +8,7 @@
  *   4. Abstract each note into a key-agnostic contour cell: `rel` = diatonic
  *      scale-step offset from the phrase anchor, `step` = 16th position in the
  *      phrase's 2-bar window, `beats` = duration, plus accent/pickup hints.
- *   5. Split the line into phrases on rests and emit PhraseTemplate JSON ready
- *      to paste into PHRASE_LIBRARY in lib/audio/melodies.ts.
+ *   5. Label sections into one tune package (A/B/answer/tag from same source).
  *
  * Usage:
  *   npx tsx scripts/mine-melodies.ts <file.mid | dir> [options]
@@ -30,6 +29,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { Midi } from "@tonejs/midi";
 import type { PhraseCell, PhraseTemplate } from "../lib/audio/melodies";
+import { labelTuneSections } from "../lib/audio/tune-packages";
 
 // ---- key detection -----------------------------------------------------------
 
@@ -124,6 +124,30 @@ function pickMelodyTrack(midi: Midi): RawNote[] {
     }
   }
   return bestNotes;
+}
+
+/** Lowest non-percussion track — candidate bass line. */
+function pickBassTrack(midi: Midi): RawNote[] {
+  let bestMean = Infinity;
+  let bestNotes: RawNote[] = [];
+  const ppq = midi.header.ppq;
+
+  for (const track of midi.tracks) {
+    if (track.instrument.percussion || track.notes.length < 3) continue;
+    const notes: RawNote[] = track.notes.map((n) => ({
+      midi: n.midi,
+      beat: n.ticks / ppq,
+      beats: n.durationTicks / ppq,
+      velocity: n.velocity,
+    }));
+    const meanPitch = notes.reduce((s, n) => s + n.midi, 0) / notes.length;
+    if (meanPitch >= 52) continue;
+    if (meanPitch < bestMean) {
+      bestMean = meanPitch;
+      bestNotes = [...notes].sort((a, b) => a.beat - b.beat);
+    }
+  }
+  return skyline(bestNotes);
 }
 
 /** Collapse any remaining chords to a single top line (skyline). */
@@ -230,26 +254,27 @@ function segmentPhrases(notes: RawNote[], windowBeats: number, maxCells: number)
 
 // ---- driver ------------------------------------------------------------------
 
-const PHRASE_IDS = ["A", "B", "answer", "tag"] as const;
-type PhraseId = (typeof PHRASE_IDS)[number];
-
 interface Options {
   mood: string;
   bars: number;
   minNotes: number;
-  /** Max cells per phrase — longer segments get split so phrases stay lofi-sparse. */
   maxCells: number;
   out?: string;
 }
 
-interface MinedTune {
+export interface MinedTunePackageJson {
+  id: string;
   file: string;
+  mood: string;
   key: string;
   confidence: number;
-  phrases: Record<PhraseId, PhraseTemplate[]>;
+  score: number;
+  structureHint: string;
+  phrases: Record<"A" | "B" | "answer" | "tag", PhraseTemplate>;
+  bassPhrase?: PhraseTemplate;
 }
 
-function mineFile(path: string, opts: Options): MinedTune | null {
+function mineFile(path: string, opts: Options): MinedTunePackageJson | null {
   const data = readFileSync(path);
   const midi = new Midi(data);
   const melody = skyline(pickMelodyTrack(midi));
@@ -259,27 +284,38 @@ function mineFile(path: string, opts: Options): MinedTune | null {
   for (const n of melody) histogram[((n.midi % 12) + 12) % 12] += n.beats;
   const key = detectKey(histogram);
 
-  // Convert the source meter to quarter-note beats per bar (6/8 -> 3, not 6),
-  // then lock the contour onto the engine's fixed two-bar / 16th-note grid.
   const ts = midi.header.timeSignatures[0]?.timeSignature ?? [4, 4];
   const beatsPerBar = (ts[0] * 4) / ts[1];
   const windowBeats = beatsPerBar * opts.bars;
   const windowSteps = Math.min(32, Math.round(windowBeats * 4));
 
-  const phrases: Record<PhraseId, PhraseTemplate[]> = { A: [], B: [], answer: [], tag: [] };
   const segments = segmentPhrases(melody, windowBeats, opts.maxCells).filter(
     (p) => p.length >= opts.minNotes,
   );
-  segments.forEach((seg, i) => {
-    const id = PHRASE_IDS[i % PHRASE_IDS.length];
-    phrases[id].push(abstractPhrase(seg, key, windowSteps));
-  });
+  const templates = segments.map((seg) => abstractPhrase(seg, key, windowSteps));
+  const labeled = labelTuneSections(templates);
+  if (!labeled) return null;
 
+  let bassPhrase: PhraseTemplate | undefined;
+  const bassLine = pickBassTrack(midi);
+  if (bassLine.length >= opts.minNotes) {
+    const bassSeg = segmentPhrases(bassLine, windowBeats, opts.maxCells)[0];
+    if (bassSeg?.length >= opts.minNotes) {
+      bassPhrase = abstractPhrase(bassSeg, key, windowSteps);
+    }
+  }
+
+  const base = path.replace(/\.(mid|midi)$/i, "").split(/[/\\]/).pop() ?? "tune";
   return {
+    id: `${opts.mood}-${base}`,
     file: path,
+    mood: opts.mood,
     key: `${PITCH_NAMES[key.tonicPc]} ${key.minor ? "minor" : "major"}`,
     confidence: Math.round(key.confidence * 1000) / 1000,
-    phrases,
+    score: labeled.score,
+    structureHint: labeled.structureHint,
+    phrases: labeled.phrases,
+    bassPhrase,
   };
 }
 
@@ -314,24 +350,24 @@ function parseArgs(argv: string[]): { target: string; opts: Options } {
 function main() {
   const { target, opts } = parseArgs(process.argv.slice(2));
   const files = collectMidiFiles(target);
-  const mined: MinedTune[] = [];
+  const packages: MinedTunePackageJson[] = [];
   for (const file of files) {
     try {
       const result = mineFile(file, opts);
-      if (result) mined.push(result);
-      else console.error(`skip (too few melody notes): ${file}`);
+      if (result) packages.push(result);
+      else console.error(`skip (incomplete tune package): ${file}`);
     } catch (err) {
       console.error(`error parsing ${file}:`, (err as Error).message);
     }
   }
 
-  const payload = { mood: opts.mood, tunes: mined };
+  const payload = { packages };
   const json = JSON.stringify(payload, null, 2);
   if (opts.out) {
     writeFileSync(opts.out, json);
-    console.error(`wrote ${mined.length} tune(s) to ${opts.out}`);
+    console.error(`wrote ${packages.length} tune package(s) to ${opts.out}`);
   } else {
-    process.stdout.write(json + "\n");
+    process.stdout.write(`${json}\n`);
   }
 }
 

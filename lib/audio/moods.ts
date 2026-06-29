@@ -5,15 +5,15 @@
 export const MOODS = {
   mellow: {
     label: "Mellow",
-    hint: "warm major, classic study-beats",
+    hint: "74–84 BPM, warm pocket groove",
   },
   jazzy: {
     label: "Jazzy",
-    hint: "ii–V–I, smoky",
+    hint: "78–92 BPM, ii–V swing & stabs",
   },
   rainy: {
     label: "Rainy",
-    hint: "minor, slower, late night",
+    hint: "56–66 BPM, slow rain & long reverb",
   },
 } as const;
 

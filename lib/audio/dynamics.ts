@@ -2,13 +2,18 @@
 // Web Audio has no external sidechain input on DynamicsCompressorNode, so
 // ducking is driven from the scheduler alongside kicks and bass hits.
 
+import { duckForProfile, type DuckProfile } from "./dynamics-grammar";
+
+export type { DuckProfile } from "./dynamics-grammar";
+export { makeSaturationCurve, triggerSaturationBurst } from "./dynamics-grammar";
+
 export interface MixDynamics {
   /** Melodic bus lands here (after the tape lowpass). */
   input: GainNode;
   /** Duckable mix bus — also accepts the reverb return. */
   mix: GainNode;
-  /** Duck the main mix to make room for kick/bass/undertone. */
-  triggerDuck(time: number, depth?: number, releaseSec?: number): void;
+  /** Duck the main mix to make room for kick/bass/undertone/snare. */
+  triggerDuck(time: number, depth?: number, releaseSec?: number, profile?: DuckProfile, duckMul?: number): void;
 }
 
 export function createMixDynamics(ctx: AudioContext): MixDynamics {
@@ -32,11 +37,24 @@ export function createMixDynamics(ctx: AudioContext): MixDynamics {
   comp.connect(duck);
   duck.connect(mix);
 
-  function triggerDuck(time: number, depth = 0.76, releaseSec = 0.2) {
+  function triggerDuck(
+    time: number,
+    depth = 0.76,
+    releaseSec = 0.2,
+    profile?: DuckProfile,
+    duckMul = 1,
+  ) {
+    let targetDepth = depth;
+    let release = releaseSec;
+    if (profile) {
+      const tuned = duckForProfile(profile, duckMul);
+      targetDepth = tuned.depth;
+      release = tuned.releaseSec;
+    }
     duck.gain.cancelScheduledValues(time);
     duck.gain.setValueAtTime(duck.gain.value, time);
-    duck.gain.linearRampToValueAtTime(depth, time + 0.006);
-    duck.gain.setTargetAtTime(1, time + 0.006, releaseSec * 0.38);
+    duck.gain.linearRampToValueAtTime(targetDepth, time + 0.006);
+    duck.gain.setTargetAtTime(1, time + 0.006, release * 0.38);
   }
 
   return { input, mix, triggerDuck };

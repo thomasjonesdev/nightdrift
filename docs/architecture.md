@@ -309,7 +309,8 @@ User taps stop / lock-screen pause / sleep timer expires
 | New drum feel | Kit grammar in `KITS` (`bands.ts`) |
 | New ambience bed | Bed definition in `ambience.ts`, optional event in `maybePlayEvent` (`engine.ts`) |
 | Persist settings | Read/write mood/volume/timer in `use-nightdrift.ts` (localStorage or URL params) |
-| Share a seed | Replace `Math.random` in `random.ts` with a seeded PRNG; thread seed through `makeScene` |
+| Share a seed | `?seed=` URL param + `SceneSummary.seed`; see [drift-dna-roadmap.md](./drift-dna-roadmap.md) |
+| Algorithmic roadmap | [drift-dna-roadmap.md](./drift-dna-roadmap.md) — phased DNA, grammars, Radio Director |
 | Analytics / logging | Hook into `onSceneChange` in `EngineConfig` |
 
 ---

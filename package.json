@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "mine-melodies": "tsx scripts/mine-melodies.ts"
+    "mine-melodies": "tsx scripts/mine-melodies.ts",
+    "build-mined-library": "tsx scripts/build-mined-library.ts",
+    "generate-samples": "tsx scripts/generate-sample-catalog.ts && tsx scripts/generate-drum-catalog.ts",
+    "test:scene-snapshot": "tsx scripts/test-scene-snapshot.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

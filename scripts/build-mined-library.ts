@@ -1,102 +1,103 @@
 /**
- * build-mined-library — curate raw mined phrases into a ready-to-merge module.
+ * build-mined-library — curate mined tune packages into a runtime module.
  *
- * Takes the JSON emitted by mine-melodies.ts and:
- *   - routes each source tune to a mood (chosen from its detected key),
- *   - folds wide melodic leaps back into a single octave so they don't pile
- *     up against the scale edges when the engine clamps them,
- *   - keeps only the first `PER_PHRASE` templates per id per mood (lofi-sparse),
- *   - emits lib/audio/mined-phrases.ts exporting MINED_PHRASES.
+ * Takes JSON from mine-melodies.ts (one complete package per source tune),
+ * routes tunes to moods, folds wide leaps, and emits lib/audio/mined-tunes.ts.
  *
  * Usage: npx tsx scripts/build-mined-library.ts [mined.json]
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import type { PhraseTemplate } from "../lib/audio/melodies";
+import type { MoodKey } from "../lib/audio/moods";
+import type { StructureId } from "../lib/audio/melodies";
+import { cleanTunePackage, type TunePackage } from "../lib/audio/tune-packages";
 
-const PHRASE_IDS = ["A", "B", "answer", "tag"] as const;
-type PhraseId = (typeof PHRASE_IDS)[number];
-const MOODS = ["mellow", "jazzy", "rainy"] as const;
-type MoodKey = (typeof MOODS)[number];
+const MOODS: MoodKey[] = ["mellow", "jazzy", "rainy"];
 
-// Mood routing, chosen from the keys mine-melodies.ts detected:
-//   waltzes (lyrical major) -> mellow, jigs/ashover (upbeat major) -> jazzy,
-//   minor jigs -> rainy. Edit this map as the corpus grows.
+/** Source file → mood routing. Expand as the MIDI corpus grows. */
 const ROUTING: Record<MoodKey, string[]> = {
   mellow: ["waltzes1.mid", "waltzes10.mid", "waltzes11.mid"],
   jazzy: ["jigs100.mid", "jigs101.mid", "ashover1.mid"],
   rainy: ["jigs10.mid", "jigs1.mid"],
 };
 
-/** Templates to keep per phrase id per mood — matches the hand-authored size. */
-const PER_PHRASE = 2;
+const MAX_PACKAGES_PER_MOOD = 5;
+const MIN_SCORE = 0.4;
 
-interface MinedTune {
+interface MinedJsonPackage {
+  id: string;
   file: string;
-  phrases: Record<PhraseId, PhraseTemplate[]>;
+  mood?: string;
+  score: number;
+  structureHint: StructureId;
+  phrases: TunePackage["phrases"];
+  bassPhrase?: TunePackage["bassPhrase"];
 }
 
-/** Fold a diatonic-step offset back into roughly one octave (period 7). */
-function foldRel(rel: number): number {
-  while (rel > 7) rel -= 7;
-  while (rel < -7) rel += 7;
-  return rel;
-}
-
-function cleanTemplate(tpl: PhraseTemplate): PhraseTemplate {
-  return { cells: tpl.cells.map((c) => ({ ...c, rel: foldRel(c.rel) })) };
+interface MinedJson {
+  packages?: MinedJsonPackage[];
+  /** Legacy format — ignored; re-run mine-melodies to upgrade. */
+  tunes?: unknown[];
 }
 
 function main() {
   const inPath = process.argv[2] ?? "scripts/mined-all.json";
-  const data = JSON.parse(readFileSync(inPath, "utf8")) as { tunes: MinedTune[] };
-  const byFile = new Map(data.tunes.map((t) => [basename(t.file), t]));
+  const raw = JSON.parse(readFileSync(inPath, "utf8")) as MinedJson;
 
-  const library: Record<MoodKey, Record<PhraseId, PhraseTemplate[]>> = {
-    mellow: { A: [], B: [], answer: [], tag: [] },
-    jazzy: { A: [], B: [], answer: [], tag: [] },
-    rainy: { A: [], B: [], answer: [], tag: [] },
-  };
+  if (!raw.packages?.length) {
+    console.error(
+      "No packages in input — re-run: npm run mine-melodies -- scripts/midi --out scripts/mined-all.json",
+    );
+    process.exit(1);
+  }
+
+  const byFile = new Map(raw.packages.map((p) => [basename(p.file), p]));
+  const library: TunePackage[] = [];
 
   for (const mood of MOODS) {
-    for (const id of PHRASE_IDS) {
-      for (const file of ROUTING[mood]) {
-        const tune = byFile.get(file);
-        if (!tune) {
-          console.error(`warning: routed tune not found in input: ${file}`);
-          continue;
-        }
-        for (const tpl of tune.phrases[id]) {
-          if (library[mood][id].length >= PER_PHRASE) break;
-          library[mood][id].push(cleanTemplate(tpl));
-        }
-        if (library[mood][id].length >= PER_PHRASE) break;
+    let kept = 0;
+    for (const file of ROUTING[mood]) {
+      if (kept >= MAX_PACKAGES_PER_MOOD) break;
+      const mined = byFile.get(file);
+      if (!mined) {
+        console.error(`warning: routed tune not found: ${file}`);
+        continue;
       }
+      if (mined.score < MIN_SCORE) {
+        console.error(`warning: low score ${mined.score} — skipping ${file}`);
+        continue;
+      }
+      library.push(
+        cleanTunePackage({
+          id: mined.id,
+          mood,
+          source: "mined",
+          phrases: mined.phrases,
+          structureHint: mined.structureHint,
+          score: mined.score,
+          bassPhrase: mined.bassPhrase,
+        }),
+      );
+      kept++;
     }
   }
 
+  library.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
   const header = `// AUTO-GENERATED by scripts/build-mined-library.ts — do not edit by hand.
-// Phrase contours mined from the Nottingham folk-tune dataset (GPL-3.0) and
-// abstracted into key-agnostic scale-step templates. Regenerate with:
+// Complete tune packages mined from folk MIDI (GPL-3.0). Regenerate with:
 //   npm run mine-melodies -- scripts/midi --out scripts/mined-all.json
 //   npx tsx scripts/build-mined-library.ts
 
-import type { PhraseTemplate } from "./melodies";
+import type { TunePackage } from "./tune-packages";
 
-export const MINED_PHRASES: Record<
-  "mellow" | "jazzy" | "rainy",
-  Record<"A" | "B" | "answer" | "tag", PhraseTemplate[]>
-> = ${JSON.stringify(library, null, 2)};
+export const MINED_TUNE_PACKAGES: TunePackage[] = ${JSON.stringify(library, null, 2)};
 `;
 
-  const outPath = "lib/audio/mined-phrases.ts";
+  const outPath = "lib/audio/mined-tunes.ts";
   writeFileSync(outPath, header);
-  const total = MOODS.reduce(
-    (s, m) => s + PHRASE_IDS.reduce((n, id) => n + library[m][id].length, 0),
-    0,
-  );
-  console.error(`wrote ${total} curated phrases to ${outPath}`);
+  console.error(`wrote ${library.length} tune package(s) to ${outPath}`);
 }
 
 main();

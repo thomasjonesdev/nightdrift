@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { IconCheck, IconLink } from "@tabler/icons-react";
 import { useNightdrift } from "@/hooks/use-nightdrift";
 import type { MoodKey } from "@/lib/audio/moods";
 import { pick } from "@/lib/audio/random";
@@ -76,6 +77,32 @@ function formatTime(totalSeconds: number) {
   return `${m}:${s}`;
 }
 
+function ShareDriftLink({ seed, mood }: { seed: number; mood: MoodKey }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("seed", String(seed));
+    url.searchParams.set("mood", mood);
+    void navigator.clipboard.writeText(url.toString()).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    });
+  }, [seed, mood]);
+
+  return (
+    <button
+      type="button"
+      onClick={copyLink}
+      className="mt-2 inline-flex items-center gap-1.5 font-sans text-[10px] uppercase tracking-[0.18em] text-haze/80 transition-colors hover:text-parchment/80"
+      aria-label="Copy link to replay this drift"
+    >
+      {copied ? <IconCheck size={12} stroke={1.5} /> : <IconLink size={12} stroke={1.5} />}
+      {copied ? "link copied" : `seed ${seed} · copy link`}
+    </button>
+  );
+}
+
 
 export default function Nightdrift() {
   const tagline = useTagline();
@@ -119,7 +146,12 @@ export default function Nightdrift() {
       className="mood-bg relative flex min-h-screen flex-col items-center overflow-hidden font-display text-ink"
       style={{ "--mood-dusk": MOOD_DUSK[mood] } as React.CSSProperties}
     >
-      <Starfield center={orbitCenter} />
+      <Starfield
+        center={orbitCenter}
+        energyShape={scene?.energyShape}
+        ambienceBed={scene?.lineup.ambience}
+        playing={playing}
+      />
       <NoiseOverlay active={crackleOn} />
 
       <header className="z-10 pt-11 text-center">
@@ -142,7 +174,7 @@ export default function Nightdrift() {
         </div>
 
         <div className="mt-7 flex h-20 flex-col items-center gap-1.5">
-          <DriftPresence show={playing && !!scene}>
+          <DriftPresence show={playing && !!scene} energyShape={scene?.energyShape}>
             {scene && (
               <div
                 key={scene.name}
@@ -157,6 +189,7 @@ export default function Nightdrift() {
                 <span className="mt-1 block font-sans text-[11px] uppercase tracking-[0.22em] text-haze">
                   {scene.progression.map((p) => p.name).join(" → ")}
                 </span>
+                <ShareDriftLink seed={scene.seed} mood={scene.family} />
               </div>
             )}
           </DriftPresence>

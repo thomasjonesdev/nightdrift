@@ -8,6 +8,7 @@ import {
   updateMediaSession,
 } from "@/lib/audio/media-session";
 import type { MoodKey } from "@/lib/audio/moods";
+import { parseSeed } from "@/lib/audio/random";
 import { PlaybackSink } from "@/lib/audio/playback-sink";
 import type { SceneSummary } from "@/lib/audio/scenes";
 
@@ -72,11 +73,26 @@ export function useNightdrift(): Nightdrift {
     volRef.current = volumeDb;
   }, [mood, crackleOn, volumeDb]);
 
+  // read shareable session params on first load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const moodParam = params.get("mood");
+    if (moodParam === "mellow" || moodParam === "jazzy" || moodParam === "rainy") {
+      setMoodState(moodParam);
+      moodRef.current = moodParam;
+    }
+  }, []);
+
   const start = useCallback(() => {
     if (engine.current) engine.current.dispose();
+    const seed =
+      typeof window !== "undefined"
+        ? parseSeed(new URLSearchParams(window.location.search).get("seed"))
+        : undefined;
     engine.current = createEngine({
       mood: moodRef.current,
       crackle: crackleRef.current,
+      seed,
       onSceneChange: setScene,
     });
     if (engine.current.ctx.state === "suspended") void engine.current.ctx.resume();

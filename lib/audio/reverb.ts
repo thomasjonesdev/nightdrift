@@ -33,6 +33,8 @@ export interface SceneReverb {
   /** Send destination for the tape bus and per-voice reverb feeds. */
   input: GainNode;
   set(palette: ReverbPalette, time: number, fast?: boolean): void;
+  /** Adjust wet send without convolver crossfade (energy automation). */
+  setSend(send: number, time: number, rampSecs?: number): void;
 }
 
 export function createSceneReverb(ctx: AudioContext, out: AudioNode): SceneReverb {
@@ -85,6 +87,11 @@ export function createSceneReverb(ctx: AudioContext, out: AudioNode): SceneRever
       curWet.gain.setValueAtTime(curWet.gain.value, time);
       curWet.gain.linearRampToValueAtTime(0, time + cross);
       activeA = !activeA;
+    },
+    setSend(send, time, rampSecs = 2.5) {
+      returnGain.gain.cancelScheduledValues(time);
+      returnGain.gain.setValueAtTime(returnGain.gain.value, time);
+      returnGain.gain.setTargetAtTime(send, time, rampSecs);
     },
   };
 }

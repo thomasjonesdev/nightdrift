@@ -3,7 +3,23 @@
 // plan chord-by-chord and round-by-round so phrases feel like someone
 // playing a tune, not random scale walks.
 
-import { MINED_PHRASES } from "./mined-phrases";
+import type { MelodyDNA } from "./drift-algorithm";
+import {
+  fitMotifToChord,
+  fitPhraseToChord,
+  harmonicRolesForProgression,
+  PHRASE_ANCHOR_OFFSET,
+  slotsForHarmonicRoles,
+  type HarmonicRole,
+  type ProgressionStepInput,
+} from "./harmonic-binding";
+import { grammarTemplate } from "./melody-grammar";
+import { MINED_TUNE_PACKAGES } from "./mined-tunes";
+import {
+  packagesForMood,
+  pickTunePackage,
+  structureForPackage,
+} from "./tune-package-picker";
 import type { MoodKey } from "./moods";
 import { chance, pick, rand, randInt } from "./random";
 
@@ -45,6 +61,8 @@ export interface PhraseCell {
   vel: number;
   accent?: boolean;
   pickup?: boolean;
+  /** Explicit rest — no note sounding; used for rest-aware fill placement when mined. */
+  rest?: boolean;
 }
 
 export interface PhraseTemplate {
@@ -60,12 +78,22 @@ export interface MelodySlot {
 
 export interface MelodyPlan {
   structureId: StructureId;
-  /** Which library row was chosen — rotated so scenes don't repeat. */
+  /** Selected tune package id — all phrases share this source. */
+  packageId: string;
+  /** True when phrases come from a mined tune package (less mutation / grammar). */
+  fromMinedPackage: boolean;
+  /** @deprecated Use packageId — kept for snapshot compatibility. */
   variantIdx: number;
   /** Transposed phrases, ready for the engine. */
   phrases: Record<PhraseId, MotifNote[]>;
   /** What to play on each chord during grooving rounds (index = chord 0–3). */
   slots: MelodySlot[];
+  /** Per-chord harmonically bound phrases (index = chord 0–3). */
+  chordPhrases: MotifNote[][];
+  /** Harmonic role per chord step — drives slot assignment. */
+  harmonicRoles: HarmonicRole[];
+  /** Phrases were bound to each chord's harmony at assembly time. */
+  harmonicBound: boolean;
   /** Middle-round variation cycle layered on top of the structure. */
   roundCycle: MotifVariation[];
   answerShift: number;
@@ -236,14 +264,6 @@ const PHRASE_LIBRARY: Record<MoodKey, Record<PhraseId, PhraseTemplate[]>> = {
   },
 };
 
-// Fold in contours mined from real tunes (see scripts/mine-melodies.ts). They
-// share the exact PhraseCell shape, so they just widen each mood's phrase pool.
-for (const mood of Object.keys(MINED_PHRASES) as MoodKey[]) {
-  for (const id of Object.keys(MINED_PHRASES[mood]) as PhraseId[]) {
-    PHRASE_LIBRARY[mood][id].push(...MINED_PHRASES[mood][id]);
-  }
-}
-
 // ---- song structures ---------------------------------------------------------
 // Each maps the four chords of a round to stored phrases — real song shapes.
 
@@ -287,59 +307,185 @@ function makeRoundCycle(): MotifVariation[] {
   return ["plain", a, b];
 }
 
-function fitPhrase(template: PhraseTemplate, anchorIdx: number, scaleLen: number): MotifNote[] {
+function fitPhrase(
+  template: PhraseTemplate,
+  anchorIdx: number,
+  scaleLen: number,
+  preserveVel = false,
+): MotifNote[] {
   return template.cells.map((c) => ({
     scaleIdx: Math.max(0, Math.min(scaleLen - 1, anchorIdx + c.rel)),
     step: c.step,
     beats: c.beats,
-    vel: c.vel * rand(0.94, 1.06),
+    vel: preserveVel ? c.vel : c.vel * rand(0.94, 1.06),
     accent: c.accent,
     pickup: c.pickup,
   }));
 }
 
-function pickStructure(prevId?: StructureId): StructureId {
-  const pool = STRUCTURE_IDS.filter((id) => id !== prevId);
-  return pick(pool);
-}
+export type { HarmonicRole } from "./harmonic-binding";
 
-function pickVariant(prevIdx: number | undefined, family: MoodKey): number {
-  const count = PHRASE_LIBRARY[family].A.length;
-  if (count <= 1) return 0;
-  if (prevIdx === undefined) return randInt(0, count - 1);
-  return (prevIdx + 1 + randInt(0, count - 2)) % count;
-}
-
-/** Build a transposed melody plan for a scene — stored phrases + structure. */
+/** Build a transposed melody plan for a scene — one complete tune package. */
 export function assembleMelodyPlan(
   family: MoodKey,
-  scaleLen: number,
+  scale: readonly string[],
+  progressionSteps: readonly ProgressionStepInput[],
+  progression: readonly { rootMidi: number; thirdIv: number; notes: readonly string[] }[],
   prev?: MelodyPlan,
+  melody?: MelodyDNA,
 ): MelodyPlan {
-  const structureId = pickStructure(prev?.structureId);
-  const variantIdx = pickVariant(prev?.variantIdx, family);
-  const lib = PHRASE_LIBRARY[family];
-  const anchorIdx = randInt(2, Math.max(2, scaleLen - 3));
+  const scaleLen = scale.length;
+  const pool = packagesForMood(family, MINED_TUNE_PACKAGES, PHRASE_LIBRARY[family]);
+  const pkg = pickTunePackage(pool, prev?.packageId);
+  const fromMinedPackage = pkg.source === "mined";
+  const structureId = structureForPackage(pkg, prev?.structureId, STRUCTURE_IDS);
+  const harmonicRoles = harmonicRolesForProgression(progressionSteps);
+  const slots = slotsForHarmonicRoles(harmonicRoles, structureId) as MelodySlot[];
+  const preserveVel = fromMinedPackage;
 
-  const pickTpl = (id: PhraseId, offset = 0) => {
-    const variants = lib[id];
-    return variants[(variantIdx + offset) % variants.length];
+  const pickTpl = (id: PhraseId): PhraseTemplate => {
+    const tpl = pkg.phrases[id];
+    if (!fromMinedPackage && melody) {
+      return grammarTemplate(tpl, id, family, melody);
+    }
+    return tpl;
   };
 
-  const phrases: Record<PhraseId, MotifNote[]> = {
-    A: fitPhrase(pickTpl("A", 0), anchorIdx, scaleLen),
-    B: fitPhrase(pickTpl("B", 0), anchorIdx + pick([-1, 0, 1]), scaleLen),
-    answer: fitPhrase(pickTpl("answer", 1), anchorIdx, scaleLen),
-    tag: fitPhrase(pickTpl("tag", 0), anchorIdx, scaleLen),
+  const templates: Record<PhraseId, PhraseTemplate> = {
+    A: pickTpl("A"),
+    B: pickTpl("B"),
+    answer: pickTpl("answer"),
+    tag: pickTpl("tag"),
+  };
+
+  const phrases = {} as Record<PhraseId, MotifNote[]>;
+  for (const id of ["A", "B", "answer", "tag"] as PhraseId[]) {
+    const chord = progression[0];
+    if (chord) {
+      phrases[id] = fitPhraseToChord(templates[id], chord, scale, {
+        anchorOffset: PHRASE_ANCHOR_OFFSET[id] ?? 0,
+        preserveVel,
+      }) as MotifNote[];
+    } else {
+      phrases[id] = fitPhrase(templates[id], randInt(2, Math.max(2, scaleLen - 3)), scaleLen, preserveVel);
+    }
+  }
+
+  const variantIdx = Math.max(0, pool.findIndex((p) => p.id === pkg.id));
+
+  const plan: MelodyPlan = {
+    structureId,
+    packageId: pkg.id,
+    fromMinedPackage,
+    variantIdx,
+    phrases,
+    slots,
+    chordPhrases: [],
+    harmonicRoles,
+    harmonicBound: false,
+    roundCycle: makeRoundCycle(),
+    answerShift: pick([-2, -1, 1, 1, 2]),
+  };
+
+  return bindMelodyToProgression(plan, progression, scale);
+}
+
+/** Re-bind per-chord phrases after mutation or when progression is finalized. */
+export function bindMelodyToProgression(
+  plan: MelodyPlan,
+  progression: readonly { rootMidi: number; thirdIv: number; notes: readonly string[] }[],
+  scale: readonly string[],
+): MelodyPlan {
+  const chordPhrases = plan.slots.map((slot, chordIdx) => {
+    const chord = progression[chordIdx];
+    if (!chord) return plan.phrases[slot.phraseId];
+    const offset = PHRASE_ANCHOR_OFFSET[slot.phraseId] ?? 0;
+    return fitMotifToChord(plan.phrases[slot.phraseId], chord, scale, offset) as MotifNote[];
+  });
+
+  return {
+    ...plan,
+    chordPhrases,
+    harmonicBound: true,
+  };
+}
+
+/** Scene-level phrase mutations driven by MelodyDNA. */
+export function applyMelodyMutations(
+  plan: MelodyPlan,
+  dna: MelodyDNA,
+  scaleLen: number,
+): MelodyPlan {
+  if (dna.mutationStrength < 0.05) return plan;
+
+  const strength = plan.fromMinedPackage ? dna.mutationStrength * 0.2 : dna.mutationStrength;
+  if (strength < 0.05) return plan;
+
+  const mutateNote = (n: MotifNote): MotifNote => {
+    let { scaleIdx, step, beats, vel } = n;
+    if (dna.stepJitter > 0 && chance(strength * 0.4)) {
+      step = Math.max(0, Math.min(30, step + randInt(-dna.stepJitter, dna.stepJitter)));
+    }
+    if (chance(strength * 0.35)) {
+      beats *= dna.stretchBias * rand(0.92, 1.08);
+    }
+    if (!plan.fromMinedPackage && chance(strength * 0.25)) {
+      vel *= rand(0.9, 1.1);
+    }
+    if (chance(dna.octaveChance * strength)) {
+      scaleIdx = Math.max(0, Math.min(scaleLen - 1, scaleIdx + pick([-2, 2])));
+    }
+    return { ...n, scaleIdx, step, beats, vel };
+  };
+
+  const enrichPhrase = (notes: MotifNote[]): MotifNote[] => {
+    const out: MotifNote[] = [];
+    for (const n of notes.map(mutateNote)) {
+      if (n.accent && chance(dna.ornamentBias * strength * 0.5)) {
+        out.push({
+          scaleIdx: Math.max(0, n.scaleIdx - 1),
+          step: Math.max(0, n.step - 1),
+          beats: 0.2,
+          vel: n.vel * 0.4,
+          pickup: true,
+        });
+      }
+      out.push(n);
+    }
+    return out;
+  };
+
+  const variationPool: MotifVariation[] = ["lift", "displaced", "ornament", "answer"];
+  const swapVariation = (v: MotifVariation): MotifVariation => {
+    if (!chance(strength * 0.3) || v === "plain" || v === "fragment") return v;
+    return pick(variationPool);
   };
 
   return {
-    structureId,
-    variantIdx,
-    phrases,
-    slots: STRUCTURES[structureId].map((s) => ({ ...s })),
-    roundCycle: makeRoundCycle(),
-    answerShift: pick([-2, -1, 1, 1, 2]),
+    ...plan,
+    phrases: plan.fromMinedPackage
+      ? plan.phrases
+      : {
+          A: enrichPhrase(plan.phrases.A),
+          B: enrichPhrase(plan.phrases.B),
+          answer: enrichPhrase(plan.phrases.answer),
+          tag: enrichPhrase(plan.phrases.tag),
+        },
+    slots: plan.slots.map((s) => ({
+      ...s,
+      presence: plan.fromMinedPackage
+        ? Math.max(s.presence, s.phraseId === "A" ? 0.95 : s.presence)
+        : s.presence * rand(0.94, 1.04),
+      variation: plan.fromMinedPackage ? s.variation : swapVariation(s.variation),
+    })),
+    roundCycle: plan.fromMinedPackage
+      ? plan.roundCycle
+      : plan.roundCycle.map((v, i) =>
+          i === 0 ? v : chance(strength * 0.35) ? pick(variationPool) : v,
+        ),
+    harmonicBound: plan.harmonicBound,
+    chordPhrases: plan.chordPhrases,
+    harmonicRoles: plan.harmonicRoles,
   };
 }
 
@@ -348,20 +494,33 @@ export function varyPhrase(
   notes: MotifNote[],
   variation: MotifVariation,
   answerShift: number,
+  melody?: MelodyDNA,
 ): MotifNote[] {
+  const ornamentP = 0.65 * (melody?.ornamentBias ?? 1);
+  const fragmentRatio = melody?.fragmentRatio ?? 0.55;
+  const displacement = melody?.displacement ?? 2;
+  const octaveChance = melody?.octaveChance ?? 0;
+
   switch (variation) {
     case "plain":
       return notes;
     case "answer":
       return notes.map((n) => ({ ...n, scaleIdx: n.scaleIdx + answerShift }));
     case "lift":
-      return notes.map((n) => ({ ...n, scaleIdx: n.scaleIdx + 2, vel: n.vel * 0.9 }));
+      return notes.map((n) => {
+        let idx = n.scaleIdx + 2;
+        if (melody && chance(octaveChance * melody.mutationStrength)) idx += pick([-2, 2]);
+        return { ...n, scaleIdx: idx, vel: n.vel * 0.9 };
+      });
     case "displaced":
-      return notes.map((n) => ({ ...n, step: Math.min(30, n.step + 2) }));
+      return notes.map((n) => ({
+        ...n,
+        step: Math.min(30, n.step + displacement + (melody ? randInt(0, 1) : 0)),
+      }));
     case "ornament": {
       const out: MotifNote[] = [];
       for (const n of notes) {
-        if (n.beats >= 1 && n.step >= 2 && chance(0.65)) {
+        if (n.beats >= 1 && n.step >= 2 && chance(ornamentP)) {
           out.push({
             scaleIdx: Math.max(0, n.scaleIdx - 1),
             step: Math.max(0, n.step - 1),
@@ -376,7 +535,7 @@ export function varyPhrase(
     }
     case "fragment":
       return notes
-        .slice(0, Math.max(2, Math.ceil(notes.length * 0.55)))
+        .slice(0, Math.max(2, Math.ceil(notes.length * fragmentRatio)))
         .map((n) => ({ ...n, vel: n.vel * 0.82 }));
   }
 }
