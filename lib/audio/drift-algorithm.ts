@@ -285,23 +285,23 @@ export function generateSceneDNA(family: MoodKey, band: Band, kitId: KitId): Sce
   const harmony: HarmonyDNA =
     family === "jazzy"
       ? {
-          reharmStrength: rand(0.48, 0.88),
-          tritoneChance: rand(0.45, 0.75),
-          modalChance: rand(0.35, 0.65),
-          passingChance: rand(0.45, 0.75),
+          reharmStrength: rand(0.18, 0.48),
+          tritoneChance: rand(0.06, 0.22),
+          modalChance: rand(0.06, 0.2),
+          passingChance: rand(0.18, 0.42),
         }
       : family === "rainy"
         ? {
-            reharmStrength: rand(0.05, 0.22),
-            tritoneChance: rand(0.08, 0.25),
-            modalChance: rand(0.08, 0.22),
-            passingChance: rand(0.12, 0.32),
+            reharmStrength: rand(0.03, 0.14),
+            tritoneChance: rand(0, 0.08),
+            modalChance: rand(0, 0.08),
+            passingChance: rand(0.06, 0.2),
           }
         : {
-            reharmStrength: rand(0.12, 0.38),
-            tritoneChance: rand(0.15, 0.35),
-            modalChance: rand(0.12, 0.32),
-            passingChance: rand(0.18, 0.42),
+            reharmStrength: rand(0.04, 0.18),
+            tritoneChance: rand(0, 0.12),
+            modalChance: rand(0, 0.1),
+            passingChance: rand(0.08, 0.28),
           };
 
   return { timing, patterns, effects, environment, structure, melody, harmony };

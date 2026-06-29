@@ -18,6 +18,7 @@
 // client component after user interaction.
 
 import { createAmbience } from "./ambience";
+import { bandMixForRound } from "./band-engineer";
 import { createDrumDynamics, createMixDynamics, makeSaturationCurve, triggerSaturationBurst } from "./dynamics";
 import { createSceneReverb } from "./reverb";
 import { createTempoDelay } from "./delay";
@@ -181,9 +182,12 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   // drums get their own bus so segues and dropouts can fade them smoothly
   const drums = ctx.createGain();
   drums.gain.value = 1;
+  const drumTrim = ctx.createGain();
+  drumTrim.gain.value = 1;
   const drumSpread = createStereoSpread(ctx, 0.14);
   const drumOut = createDrumDynamics(ctx, master);
-  drums.connect(drumSpread.input);
+  drums.connect(drumTrim);
+  drumTrim.connect(drumSpread.input);
   drumSpread.output.connect(drumOut);
 
   // sub-bass undertone — quiet enough for the main mix to breathe around
@@ -232,6 +236,8 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   textureBus.gain.value = MOOD_PROFILES[config.mood].production.textureBusGain;
   const textureDuck = ctx.createGain();
   textureDuck.gain.value = 1;
+  const padBus = ctx.createGain();
+  padBus.gain.value = MOOD_PROFILES[config.mood].production.padBusGain;
   const melodyBus = ctx.createGain();
   const bassBus = ctx.createGain();
   const chordPan = ctx.createStereoPanner();
@@ -242,6 +248,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   bassPan.pan.value = -0.04;
   chordBus.connect(chordPan).connect(tape);
   textureBus.connect(textureDuck).connect(chordPan);
+  padBus.connect(textureDuck);
   melodyBus.connect(melodyPan).connect(tape);
   bassBus.connect(bassPan).connect(tape);
 
@@ -252,7 +259,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   };
   const voices = createVoices({ ...sharedBuses, tape, role: "ambient" });
   const chordVoices = createVoices({ ...sharedBuses, tape: chordBus, role: "chord" });
-  const textureVoices = createVoices({ ...sharedBuses, tape: textureBus, role: "chord" });
+  const textureVoices = createVoices({ ...sharedBuses, tape: textureBus, pad: padBus, role: "chord" });
   const melodyVoices = createVoices({ ...sharedBuses, tape: melodyBus, role: "melody" });
   const bassVoices = createVoices({ ...sharedBuses, tape: bassBus, role: "bass" });
 
@@ -329,7 +336,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
   function chordVelScale(voice: ChordVoice = scene.band.chordVoice): number {
     let s = SYNTHY_CHORD_GAIN[voice] ?? 1;
     if (voice === "horn") s *= 0.55;
-    return s;
+    return s * scene.mix.chordVelMul;
   }
 
   function textureVelScale(voice: ChordVoice): number {
@@ -531,14 +538,21 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     }
   }
 
-  /** Pre-generate and warm the next scene during the outro pass. */
+  /** Pre-generate and warm the next scene well before the segue lands. */
+  function shouldPrefetchNextScene(): boolean {
+    if (bridge) return false;
+    if (round >= scene.rounds - 2) return true;
+    if (pendingMood && pendingMood !== scene.family && round >= 1) return true;
+    return false;
+  }
+
   function maybePrefetchNextScene() {
-    if (prefetchedScene || bridge) return;
-    if (round !== scene.rounds - 1) return;
-    if (chordIdx < CHORDS_PER_ROUND - 2) return;
+    if (!shouldPrefetchNextScene()) return;
     const nextFamily = resolveSegueFamily(radio, scene, pendingMood);
-    prefetchedScene = makeScene(nextFamily, scene, forkSceneRng(), radio);
-    samples.warmForScene(prefetchedScene, "idle");
+    if (!prefetchedScene || prefetchedScene.family !== nextFamily) {
+      prefetchedScene = makeScene(nextFamily, scene, forkSceneRng(), radio);
+    }
+    samples.warmForScene(prefetchedScene, "high");
   }
 
   let lastSyncedDelayBpm = 0;
@@ -565,6 +579,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     tempoDelay.setBpm(s.bpm, t);
     lastSyncedDelayBpm = s.bpm;
     textureBus.gain.setTargetAtTime(s.textureBusGain, t, fast ? 0.5 : 2.5);
+    padBus.gain.setTargetAtTime(s.padBusGain, t, fast ? 0.5 : 2.5);
     const pianoLayout = dualPianoLayout(s.band);
     if (pianoLayout) {
       const pan = dualPianoPan(pianoLayout);
@@ -575,6 +590,17 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
       melodyPan.pan.setTargetAtTime(DEFAULT_MELODY_PAN, t, fast ? 0.5 : 2.5);
     }
     ambience.set(s.ambience, t, fast);
+  }
+
+  /** Band engineer — ride the faders through the form. */
+  function applyBandMix(t: number, energy: number, rampSecs: number) {
+    const mix = bandMixForRound(scene.mix, round, scene.rounds, energy);
+    chordBus.gain.setTargetAtTime(mix.chordBus, t, rampSecs);
+    melodyBus.gain.setTargetAtTime(mix.melodyBus, t, rampSecs);
+    bassBus.gain.setTargetAtTime(mix.bassBus, t, rampSecs);
+    drumTrim.gain.setTargetAtTime(mix.drumBus, t, rampSecs);
+    textureBus.gain.setTargetAtTime(scene.textureBusGain * mix.textureBus, t, rampSecs);
+    padBus.gain.setTargetAtTime(scene.padBusGain * mix.padBus, t, rampSecs);
   }
 
   /** The seamless segue: swap scenes at a chord boundary. */
@@ -590,9 +616,10 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     round = 0;
     outroStarted = false;
     applyAtmosphere(next, t);
+    applyBandMix(t, energyFor(0, 0), 2.5);
     drums.gain.cancelScheduledValues(t);
-    drums.gain.setValueAtTime(Math.max(drums.gain.value, 0.05), t);
-    drums.gain.linearRampToValueAtTime(1, t + 3);
+    drums.gain.setValueAtTime(Math.max(drums.gain.value, 0.12), t);
+    drums.gain.linearRampToValueAtTime(1, t + 1.1);
     if (pChance(0.5)) voices.playNeedleDrop(t + 0.2);
     config.onSceneChange?.(summarize(next));
     samples.warmForScene(next);
@@ -615,8 +642,14 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     const palette = energyAutomation(scene, round, chordIdx, energy);
     tape.frequency.setTargetAtTime(palette.tapeCutoff, t, rampSecs);
     sceneReverb.setSend(palette.reverbSend, t, rampSecs);
-    ambience.morphMovement(palette.ambienceMovement, t, rampSecs);
-    ambience.morphLevels(palette.ambienceLevel, palette.ambienceSecondaryWeight, t, rampSecs);
+    ambience.morphMovement(palette.ambienceMovement * scene.mix.ambienceMul, t, rampSecs);
+    ambience.morphLevels(
+      palette.ambienceLevel * scene.mix.ambienceMul,
+      palette.ambienceSecondaryWeight,
+      t,
+      rampSecs,
+    );
+    applyBandMix(t, energy, rampSecs);
   }
 
   /** Advance round-indexed DNA at the start of each new pass. */
@@ -637,7 +670,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     if (layout && scene.band.melodyVoice === "piano") {
       gain *= melodyPianoVelMul(layout);
     }
-    melodyPlayers[scene.band.melodyVoice](out, t, dur, vel * gain);
+    melodyPlayers[scene.band.melodyVoice](out, t, dur, vel * gain * scene.mix.melodyVelMul);
   }
 
   function voiceCompNote(note: string): string {
@@ -992,13 +1025,13 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     scheduleBedLayer(t, energy, chord, chordDur);
     scheduleHarmony(t, energy, chord, chordDur);
 
-    // quiet triad pad — root/third/fifth only, sits under piano not over it
-    if (scene.padOn && energy >= 0.38) {
+    // formless root+fifth wash — just above the weather bed
+    if (scene.padOn && energy >= 0.32) {
       textureVoices.playPad(
         soothingPadNotes(chord),
         t,
-        chordDur * 1.05,
-        0.005 + 0.004 * energy,
+        chordDur * 1.08,
+        0.016 + 0.009 * energy,
         scene.band.padStyle ?? "warm",
       );
     }
@@ -1063,13 +1096,22 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     const beatLen = sixteenth * 4;
 
     if (bridge) {
+      const progress = 1 - bridge.remaining / SEGUE_BRIDGE_STEPS;
       if (step === 0) {
-        const progress = 1 - bridge.remaining / SEGUE_BRIDGE_STEPS;
         const oldChord = scene.progression[scene.progression.length - 1];
         const newChord = bridge.nextScene.progression[0];
         const chord = progress < 0.55 ? oldChord : newChord;
         scheduleBridgeComping(t, sixteenth, chord, progress);
         applyBridgeAtmosphere(bridge.nextScene, t, progress);
+      }
+      // Keep a faint pulse through the handoff so the grid never drops out.
+      const bridgeDrumMul = 0.22 + progress * 0.28;
+      if (step % 8 === 0) {
+        const kickT = drumAt(t, sixteenth);
+        voices.playKick(kickT, 0.38 * bridgeDrumMul);
+        triggerKickPulse(kickT, 0.38 * bridgeDrumMul);
+      } else if (step % 8 === 4) {
+        voices.playHat(drumAt(t, sixteenth), 0.14 * bridgeDrumMul);
       }
       bridge.remaining--;
       if (bridge.remaining <= 0) {
@@ -1104,8 +1146,9 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
           fromBpm: scene.bpm,
           toBpm: next.bpm,
         };
+        samples.warmForScene(next, "high");
         drums.gain.cancelScheduledValues(t);
-        drums.gain.setTargetAtTime(0.04, t, 0.6);
+        drums.gain.setTargetAtTime(0.18, t, 0.35);
         return;
       }
 
@@ -1113,12 +1156,12 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
 
       applyEnergyAutomation(t, energy, beatLen * 6);
 
-      // outro: let the drums dissolve under the final chord
+      // outro: thin the drums slightly — keep the pulse alive into the segue bridge
       if (round === scene.rounds - 1 && chordIdx === CHORDS_PER_ROUND - 1 && !outroStarted) {
         outroStarted = true;
         drums.gain.cancelScheduledValues(t);
         drums.gain.setValueAtTime(drums.gain.value, t);
-        drums.gain.linearRampToValueAtTime(0.08, t + beatLen * 7);
+        drums.gain.linearRampToValueAtTime(0.55, t + beatLen * 4);
       }
 
       // classic lofi dropout: occasionally a mid-scene chord goes beatless
@@ -1145,7 +1188,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     const playBass = bassPlayers[scene.band.bassVoice];
     if (playBass) {
       const bassThin = evolution.modifiers.bassThinMul;
-      const bVel = Math.min(1, (0.4 + 0.6 * energy) * bassThin);
+      const bVel = Math.min(1, (0.4 + 0.6 * energy) * bassThin * scene.mix.bassVelMul);
       const duckBass = (note: string, at: number, dur: number, vel: number, depth = 0.87) => {
         playBass(note, at, dur, vel);
         mixDynamics.triggerDuck(at, depth, 0.12, "bass", scene.dna.effects.duckMul);
@@ -1169,7 +1212,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
     if (drumsOnForChord) {
       const kit = scene.drumGrammar;
       const dVel = 0.6 + 0.4 * energy;
-      const duck = scene.dna.effects.duckMul;
+      const duck = scene.dna.effects.duckMul * scene.mix.duckMul;
 
       if (kit.kicks.includes(step)) {
         const kickT = drumAt(t, sixteenth);
@@ -1329,6 +1372,7 @@ export function createEngine(config: EngineConfig): NightdriftEngine {
         return;
       }
       pendingMood = mood;
+      maybePrefetchNextScene();
       // start easing the drums down now; the segue lands at the next chord boundary
       const t = ctx.currentTime;
       drums.gain.cancelScheduledValues(t);

@@ -35,10 +35,12 @@ export interface Buses {
   noiseBuf: AudioBuffer;
   /** Tape-wobble LFO output (cents), connect to detune. */
   wobbleAmt: GainNode;
+  /** Optional pad-only bus — formless wash, levelled near ambience. */
+  pad?: AudioNode;
 }
 
 export function createVoices(buses: Buses) {
-  const { ctx, tape, drums, undertone, master, reverb, pops, noiseBuf, wobbleAmt, samples, role } = buses;
+  const { ctx, tape, pad, drums, undertone, master, reverb, pops, noiseBuf, wobbleAmt, samples, role } = buses;
   const perfState = createPerformanceState();
   const perfRole = role ?? "chord";
 
@@ -153,66 +155,46 @@ export function createVoices(buses: Buses) {
     });
   }
 
-  /** Soft analog swell — kept dark, narrow, and consonant so it stays lofi-not-cinematic. */
+  /** Formless wash — flat, dark, mostly reverb; sits just above ambience. */
   function playPad(
     notes: string[],
     time: number,
     dur: number,
     vel: number,
-    style: PadStyle = "warm",
+    _style: PadStyle = "warm",
   ) {
-    const attack = dur * (style === "warm" ? 0.38 : style === "choir" ? 0.42 : 0.44);
-    const peak = dur * 0.8;
+    const out = pad ?? tape;
+    const fadeIn = dur * 0.65;
+    const fadeOut = dur * 0.25;
 
-    const masterG = ctx.createGain();
-    masterG.gain.setValueAtTime(0.0001, time);
-    masterG.gain.linearRampToValueAtTime(vel, time + attack);
-    masterG.gain.setValueAtTime(vel * 0.88, peak);
-    masterG.gain.linearRampToValueAtTime(0.0001, time + dur);
+    const tone = ctx.createGain();
+    tone.gain.setValueAtTime(0.0001, time);
+    tone.gain.linearRampToValueAtTime(vel, time + fadeIn);
+    tone.gain.setValueAtTime(vel * 0.96, time + fadeIn + Math.max(0, dur - fadeIn - fadeOut));
+    tone.gain.linearRampToValueAtTime(0.0001, time + dur);
 
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.Q.value = 0.55;
-    const lpLo = style === "warm" ? 320 : style === "choir" ? 380 : 360;
-    const lpHi = style === "warm" ? 1200 : style === "choir" ? 1500 : 1350;
-    lp.frequency.setValueAtTime(lpLo, time);
-    lp.frequency.exponentialRampToValueAtTime(lpHi, time + dur * 0.62);
-    lp.frequency.exponentialRampToValueAtTime(Math.max(520, lpLo), time + dur);
+    lp.frequency.value = 340;
+    lp.Q.value = 0.22;
 
-    const breath = ctx.createOscillator();
-    breath.frequency.value = 0.07;
-    const breathAmt = ctx.createGain();
-    breathAmt.gain.value = vel * 0.06;
-    breath.connect(breathAmt).connect(masterG.gain);
+    const dry = ctx.createGain();
+    dry.gain.value = 0.18;
+    const wet = ctx.createGain();
+    wet.gain.value = 0.78;
 
-    const revSend = ctx.createGain();
-    revSend.gain.value = style === "warm" ? 0.32 : style === "choir" ? 0.4 : 0.36;
+    lp.connect(tone);
+    tone.connect(dry).connect(out);
+    tone.connect(wet).connect(reverb);
 
-    lp.connect(masterG);
-    masterG.connect(tape);
-    masterG.connect(revSend).connect(reverb);
-
-    const sawDetunes =
-      style === "choir"
-        ? [-7, 0, 7]
-        : [-5, 0, 5];
-
-    for (const note of notes) {
-      const f = freq(note);
-      for (const detune of sawDetunes) {
-        const o = ctx.createOscillator();
-        o.type = style === "huge" ? "triangle" : "sine";
-        o.frequency.value = f;
-        o.detune.value = detune;
-        wobbleAmt.connect(o.detune);
-        o.connect(lp);
-        o.start(time);
-        o.stop(time + dur + 0.2);
-      }
+    for (const note of notes.slice(0, 2)) {
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = freq(note);
+      o.connect(lp);
+      o.start(time);
+      o.stop(time + dur + 0.35);
     }
-
-    breath.start(time);
-    breath.stop(time + dur + 0.25);
   }
 
   // ---- Karplus-Strong strings (rendered offline into a one-shot buffer) ----

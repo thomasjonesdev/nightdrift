@@ -17,6 +17,8 @@ export interface MoodProduction {
   padChanceMul: number;
   wobbleCents: [number, number];
   textureBusGain: number;
+  /** Dedicated pad wash — just above the ambience bed. */
+  padBusGain: number;
 }
 
 export interface MoodProfile {
@@ -41,6 +43,7 @@ export const MOOD_PROFILES: Record<MoodKey, MoodProfile> = {
       padChanceMul: 0.85,
       wobbleCents: [5, 11],
       textureBusGain: 0.62,
+      padBusGain: 0.24,
     },
     preferredKits: ["pocket", "boomBap", "slowMotion"],
     bandWeightFloor: 0.55,
@@ -57,6 +60,7 @@ export const MOOD_PROFILES: Record<MoodKey, MoodProfile> = {
       padChanceMul: 0.55,
       wobbleCents: [3, 8],
       textureBusGain: 0.48,
+      padBusGain: 0.2,
     },
     preferredKits: ["punchy", "bossa", "pocket"],
     bandWeightFloor: 0.45,
@@ -73,6 +77,7 @@ export const MOOD_PROFILES: Record<MoodKey, MoodProfile> = {
       padChanceMul: 1.35,
       wobbleCents: [6, 14],
       textureBusGain: 0.74,
+      padBusGain: 0.28,
     },
     preferredKits: ["muted", "heartbeat", "brushes", "slowMotion"],
     bandWeightFloor: 0.5,

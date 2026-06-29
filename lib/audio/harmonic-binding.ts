@@ -55,12 +55,24 @@ const ROLE_SLOTS: Record<HarmonicRole, MelodySlotInput> = {
 
 /** Degree-sequence → harmonic role per bar (mod-12 degrees). */
 const PROGRESSION_ROLE_MAP: Record<string, HarmonicRole[]> = {
-  "2,7,0,9": ["setup", "tension", "resolution", "cadence"],
+  // major-centric calm loops (I / IV / V / sus)
+  "0,5,0,7": ["setup", "color", "resolution", "cadence"],
+  "5,0,7,5": ["color", "setup", "tension", "color"],
+  "0,5,7,0": ["setup", "color", "tension", "resolution"],
+  "0,7,5,0": ["setup", "tension", "color", "resolution"],
+  "5,7,0,5": ["color", "tension", "resolution", "color"],
+  "0,5,7,5": ["setup", "color", "tension", "color"],
+  "5,0,5,7": ["color", "setup", "color", "tension"],
+  "0,9,5,7": ["setup", "color", "color", "tension"],
+  // jazzy — bright ii (maj7) color
   "2,7,0,5": ["setup", "tension", "resolution", "color"],
+  "0,5,2,7": ["setup", "color", "setup", "tension"],
+  "7,0,5,7": ["tension", "setup", "color", "tension"],
+  // legacy maps (older templates / segue continuity)
+  "2,7,0,9": ["setup", "tension", "resolution", "cadence"],
   "0,9,2,7": ["setup", "color", "setup", "tension"],
   "4,9,2,7": ["setup", "tension", "setup", "tension"],
   "5,4,2,0": ["color", "color", "setup", "resolution"],
-  "0,9,5,7": ["setup", "color", "color", "tension"],
   "0,4,9,5": ["setup", "color", "color", "color"],
   "5,7,4,9": ["color", "tension", "setup", "cadence"],
   "0,7,5,4": ["setup", "tension", "color", "color"],

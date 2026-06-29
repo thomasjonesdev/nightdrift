@@ -4,6 +4,8 @@
 // The engine plays a scene for a few rounds (8-bar passes) and then
 // segues into the next one.
 
+import { produceArrangement } from "./arrangement-producer";
+import { buildBandMix, type BandMix } from "./band-engineer";
 import { pickAmbienceStack, type AmbienceBed, type AmbienceSpec } from "./ambience";
 import {
   assembleBand,
@@ -108,50 +110,50 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
     minor: false,
     bpm: [74, 84],
     progressions: [
-      // IV iii ii I — the classic study-beats descent
+      // I → IV → I → V — home, wander, home, gentle lift
+      [
+        { degree: 0, quality: "maj9" },
+        { degree: 5, quality: "maj69" },
+        { degree: 0, quality: "maj7" },
+        { degree: 7, quality: "dom7sus" },
+      ],
+      // IV → I → V → IV — open windows
       [
         { degree: 5, quality: "maj9" },
-        { degree: 4, quality: "min9" },
-        { degree: 2, quality: "min9" },
-        { degree: 0, quality: "maj9" },
+        { degree: 0, quality: "maj69" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 5, quality: "maj7" },
       ],
-      // I VI ii V — the other circle of fifths
-      [
-        { degree: 0, quality: "maj9" },
-        { degree: 8, quality: "dom13" },
-        { degree: 2, quality: "dom9" },
-        { degree: 7, quality: "min9" },
-      ],
-      // I vi IV V
-      [
-        { degree: 0, quality: "maj9" },
-        { degree: 9, quality: "min9" },
-        { degree: 5, quality: "maj9" },
-        { degree: 7, quality: "dom13" },
-      ],
-      // I iii vi IV
+      // I → IV → V → I — classic calm loop
       [
         { degree: 0, quality: "maj69" },
-        { degree: 4, quality: "min9" },
-        { degree: 9, quality: "min9" },
         { degree: 5, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 0, quality: "maj9" },
       ],
-      // IV V iii vi
-      [
-        { degree: 5, quality: "maj9" },
-        { degree: 7, quality: "dom13" },
-        { degree: 4, quality: "min9" },
-        { degree: 9, quality: "min9" },
-      ],
-      // I Vsus IV iii — suspended daydream
+      // I → V(sus) → IV → I — suspended daydream
       [
         { degree: 0, quality: "maj9" },
         { degree: 7, quality: "dom7sus" },
         { degree: 5, quality: "maj69" },
-        { degree: 4, quality: "min11" },
+        { degree: 0, quality: "maj7" },
+      ],
+      // IV → V → I → IV — daylight cycle
+      [
+        { degree: 5, quality: "maj7" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 0, quality: "maj9" },
+        { degree: 5, quality: "maj69" },
+      ],
+      // I → IV → V → IV — soft plagal landing
+      [
+        { degree: 0, quality: "maj9" },
+        { degree: 5, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 5, quality: "maj69" },
       ],
     ],
-    scaleOffsets: [4, 7, 9, 11, 12, 14, 16, 19],
+    scaleOffsets: [0, 2, 4, 7, 9, 11, 12, 14, 16, 19],
     names: [
       "honey lamplight", "porch swing dusk", "sunday polaroids",
       "window seat", "golden hour leftovers", "paper stars",
@@ -164,43 +166,43 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
     minor: false,
     bpm: [78, 92],
     progressions: [
-      // ii V I vi — smoky turnaround
+      // IV → V → I → IV — warm lounge, no minor ii
       [
-        { degree: 2, quality: "min9" },
-        { degree: 7, quality: "dom13" },
-        { degree: 0, quality: "maj9" },
-        { degree: 9, quality: "min9lo" },
-      ],
-      // iii VI ii V — circle of fifths
-      [
-        { degree: 4, quality: "min9" },
-        { degree: 9, quality: "dom9" },
-        { degree: 2, quality: "min9" },
-        { degree: 7, quality: "dom13" },
-      ],
-      // I vi ii V
-      [
-        { degree: 0, quality: "maj69" },
-        { degree: 9, quality: "min9lo" },
-        { degree: 2, quality: "min9" },
-        { degree: 7, quality: "dom13" },
-      ],
-      // ii V I IV
-      [
-        { degree: 2, quality: "min9" },
-        { degree: 7, quality: "dom13" },
-        { degree: 0, quality: "maj9" },
         { degree: 5, quality: "maj9" },
-      ],
-      // ii11 Vsus I69 IVmaj7 — the resolution arrives sideways
-      [
-        { degree: 2, quality: "min11" },
         { degree: 7, quality: "dom7sus" },
         { degree: 0, quality: "maj69" },
         { degree: 5, quality: "maj7" },
       ],
+      // I → IV → V → I
+      [
+        { degree: 0, quality: "maj69" },
+        { degree: 5, quality: "maj9" },
+        { degree: 7, quality: "dom13" },
+        { degree: 0, quality: "maj9" },
+      ],
+      // bright ii (maj7) → V(sus) → I → IV — lydian color, still major
+      [
+        { degree: 2, quality: "maj7" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 0, quality: "maj9" },
+        { degree: 5, quality: "maj69" },
+      ],
+      // I → IV → ii(maj7) → V(sus)
+      [
+        { degree: 0, quality: "maj9" },
+        { degree: 5, quality: "maj7" },
+        { degree: 2, quality: "maj7" },
+        { degree: 7, quality: "dom7sus" },
+      ],
+      // V(sus) → I → IV → V
+      [
+        { degree: 7, quality: "dom7sus" },
+        { degree: 0, quality: "maj69" },
+        { degree: 5, quality: "maj9" },
+        { degree: 7, quality: "dom13" },
+      ],
     ],
-    scaleOffsets: [9, 12, 14, 16, 19, 21, 24],
+    scaleOffsets: [0, 2, 4, 7, 9, 11, 12, 14, 16, 19, 21],
     names: [
       "blue corner table", "last train home", "neon in puddles",
       "after-hours wurlitzer", "cigarette moon", "the quiet set",
@@ -209,47 +211,47 @@ const FAMILIES: Record<MoodKey, FamilyConfig> = {
     ],
   },
   rainy: {
-    keys: [0, 5, 7, 2, 9], // C F G D Am — major centers, rain without minor-key drama
+    keys: [0, 5, 7, 2, 9], // C F G D — major centers only
     minor: false,
     bpm: [56, 66],
     progressions: [
-      // I vi IV V — rain on a warm window
-      [
-        { degree: 0, quality: "maj9" },
-        { degree: 9, quality: "min9" },
-        { degree: 5, quality: "maj9" },
-        { degree: 7, quality: "dom9" },
-      ],
-      // I IV vi V
+      // I → IV → I → V — rain on a warm window
       [
         { degree: 0, quality: "maj69" },
         { degree: 5, quality: "maj9" },
-        { degree: 9, quality: "min9" },
-        { degree: 7, quality: "dom13" },
+        { degree: 0, quality: "maj7" },
+        { degree: 7, quality: "dom7sus" },
       ],
-      // vi IV I V — gentle lift home
+      // IV → I → V → IV
       [
-        { degree: 9, quality: "min9" },
-        { degree: 5, quality: "maj9" },
-        { degree: 0, quality: "maj9" },
-        { degree: 7, quality: "dom9" },
-      ],
-      // I iii vi IV
-      [
-        { degree: 0, quality: "maj9" },
-        { degree: 4, quality: "min9" },
-        { degree: 9, quality: "min9" },
         { degree: 5, quality: "maj69" },
+        { degree: 0, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
+        { degree: 5, quality: "maj7" },
       ],
-      // I Vsus IV iii — suspended grey sky, still major tonic
+      // I → V(sus) → IV → I
       [
         { degree: 0, quality: "maj9" },
         { degree: 7, quality: "dom7sus" },
         { degree: 5, quality: "maj69" },
-        { degree: 4, quality: "min11" },
+        { degree: 0, quality: "maj7" },
+      ],
+      // IV → I → IV → V
+      [
+        { degree: 5, quality: "maj7" },
+        { degree: 0, quality: "maj69" },
+        { degree: 5, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
+      ],
+      // I → IV → V → IV — one optional soft vi loop for gentle nostalgia
+      [
+        { degree: 0, quality: "maj69" },
+        { degree: 9, quality: "min9lo" },
+        { degree: 5, quality: "maj9" },
+        { degree: 7, quality: "dom7sus" },
       ],
     ],
-    scaleOffsets: [2, 4, 5, 7, 9, 11, 12, 14],
+    scaleOffsets: [0, 2, 4, 7, 9, 11, 12, 14],
     names: [
       "rain on glass", "umbrella graveyard", "streetlight halo",
       "thunder two towns over", "wet asphalt mirror", "november windowsill",
@@ -308,8 +310,10 @@ export interface Scene {
   delayWet: number;
   /** Tempo-synced echo feedback. */
   delayFeedback: number;
-  /** Pad/bed/harmony bus trim — rainy sits wetter, jazzy stays dry. */
+  /** Bed/harmony bus trim. */
   textureBusGain: number;
+  /** Dedicated pad wash — just above the ambience bed. */
+  padBusGain: number;
   /** Algorithmic feel profile — timing, patterns, effects, environment. */
   dna: SceneDNA;
   /** Kit grammar mutated for this scene's groove character. */
@@ -318,6 +322,8 @@ export interface Scene {
   compingPattern: CompingPattern;
   /** Seed for reproducible generation — share via ?seed= in the URL. */
   seed: number;
+  /** Per-band board mix — set by the band engineer / producer pass. */
+  mix: BandMix;
 }
 
 export interface ProgressionStepSummary {
@@ -487,14 +493,19 @@ function buildScene(
 
   const voicingStyle = weightedPick<VoicingStyle>(["cozy", "open", "shell"], (s) => {
     if (family === "jazzy") {
-      if (s === "shell") return 2.8;
-      if (s === "open") return 1.6;
-      return 0.7;
+      if (s === "cozy") return 2.4;
+      if (s === "open") return 2.2;
+      return 0.4;
     }
     if (family === "rainy") {
+      if (s === "cozy") return 3.6;
+      if (s === "open") return 1.6;
+      return 0.15;
+    }
+    if (family === "mellow") {
       if (s === "cozy") return 3.2;
-      if (s === "open") return 1.4;
-      return 0.5;
+      if (s === "open") return 1.8;
+      return 0.25;
     }
     if (band.comping === "sustained") return s === "open" ? 2.5 : 1;
     if (band.comping === "stabs") return s === "shell" ? 2.2 : 1;
@@ -586,11 +597,15 @@ function buildScene(
     delayWet: rand(...moodProd.delayWet),
     delayFeedback: rand(...moodProd.delayFeedback),
     textureBusGain: moodProd.textureBusGain,
+    padBusGain: moodProd.padBusGain,
     dna,
     drumGrammar,
     compingPattern,
     seed,
+    mix: buildBandMix(band, family),
   };
 
-  return prev && segue ? applyTapeContinuity(prev, built, segue.hints.strategy) : built;
+  return produceArrangement(
+    prev && segue ? applyTapeContinuity(prev, built, segue.hints.strategy) : built,
+  );
 }

@@ -45,8 +45,8 @@ export interface SeguePlan {
   hints: SegueHints;
 }
 
-/** Beatless bars between scenes — tempo morph hides inside this window. */
-export const SEGUE_BRIDGE_STEPS = 16;
+/** Sixteenth-note handoff between scenes — tempo morph hides inside this window. */
+export const SEGUE_BRIDGE_STEPS = 8;
 
 const FAMILY_TRANSITIONS: Record<MoodKey, [MoodKey, number][]> = {
   mellow: [
