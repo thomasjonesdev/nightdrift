@@ -4,6 +4,7 @@
 // The engine plays a scene for a few rounds (8-bar passes) and then
 // segues into the next one.
 
+import { composeArrangement } from "./band-composer";
 import { produceArrangement } from "./arrangement-producer";
 import { buildBandMix, type BandMix } from "./band-engineer";
 import { pickAmbienceStack, type AmbienceBed, type AmbienceSpec } from "./ambience";
@@ -606,6 +607,8 @@ function buildScene(
   };
 
   return produceArrangement(
-    prev && segue ? applyTapeContinuity(prev, built, segue.hints.strategy) : built,
+    composeArrangement(
+      prev && segue ? applyTapeContinuity(prev, built, segue.hints.strategy) : built,
+    ),
   );
 }
